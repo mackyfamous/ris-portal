@@ -11,7 +11,9 @@ The old `RIS Consolidated Inventory` tab and its menu can be left in the workboo
 
 ## Files
 
-- `Code.gs` - portal backend, sheet setup, RIS submission, source routing, stock checks, and email notifications.
+- `Code.gs` - web app entrypoints, setup menu, RIS submission flow, and email notification trigger.
+- `RIS_Core.gs` - shared sheet helpers, header mapping, user validation, RIS lookup, write-back utilities, and formatting helpers.
+- `RIS_Inventory.gs` - Medicine/Supplies source routing, inventory reads, program loading, stock status, and RIS number generation.
 - `Index.html` - web app frontend with Medicine/Supplies buttons and stock-status UI.
 - `RIS_Excel_Generator_Addon.gs` - generates an Excel RIS file from the configured RIS Excel template.
 - `RIS_PDF_Generator_Addon.gs` - generates a legal-size RIS PDF.
@@ -169,7 +171,7 @@ Only users with `Status` equal to `Active` can generate Excel/PDF outputs.
 
 1. Create or open the Google Sheet that will store RIS transactions.
 2. Open **Extensions > Apps Script**.
-3. Add the `.gs` and `.html` files from this repository.
+3. Add every `.gs` file, the `Index.html` file, and the `appsscript.json` manifest from this repository.
 4. Update configuration IDs.
 5. Enable the Advanced Drive service.
 6. Run `setupRISPortalSheets`.
