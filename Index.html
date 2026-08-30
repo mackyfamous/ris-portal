@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Requisition Issuance Slip Portal</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #64748b;
+      --line: #d8dee9;
+      --bg: #f6f8fb;
+      --teal: #0f766e;
+      --green: #15803d;
+      --amber: #b45309;
+      --red: #b91c1c;
+      --green-bg: #dcfce7;
+      --amber-bg: #fef3c7;
+      --red-bg: #fee2e2;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 16px;
+    }
+
+    .app {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 24px 16px 56px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 4px 0 0;
+      color: var(--muted);
+    }
+
+    .ris-no {
+      min-width: 220px;
+      padding: 12px 14px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      text-align: right;
+    }
+
+    .ris-no span {
+      display: block;
+      font-size: .8rem;
+      font-weight: 800;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .ris-no strong {
+      display: block;
+      color: var(--teal);
+      font-size: 1.2rem;
+    }
+
+    .panel {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .panel-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .panel-title {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 800;
+    }
+
+    .panel-body {
+      padding: 16px;
+    }
+
+    .source-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .source-button {
+      min-height: 112px;
+      padding: 18px;
+      border: 2px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      text-align: left;
+    }
+
+    .source-button.active {
+      border-color: var(--teal);
+      background: #ecfdf5;
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, .12);
+    }
+
+    .source-button strong {
+      display: block;
+      font-size: 1.45rem;
+      line-height: 1.15;
+    }
+
+    .source-button span {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+    }
+
+    .message {
+      display: none;
+      margin-bottom: 16px;
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-weight: 700;
+    }
+
+    .message.info { display: block; background: #e0f2fe; color: #075985; }
+    .message.success { display: block; background: var(--green-bg); color: #166534; }
+    .message.error { display: block; background: var(--red-bg); color: #991b1b; }
+
+    .status-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .status-box {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .status-box strong {
+      display: block;
+      font-size: 1.35rem;
+      line-height: 1;
+    }
+
+    .status-box span {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .status-box.available strong { color: var(--green); }
+    .status-box.low strong { color: var(--amber); }
+    .status-box.out strong { color: var(--red); }
+
+    .inventory-wrap {
+      max-height: 430px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    table.inventory {
+      min-width: 980px;
+      margin: 0;
+    }
+
+    .inventory thead th {
+      position: sticky;
+      top: 0;
+      background: #eef2f7;
+      z-index: 1;
+      color: #475569;
+      font-size: .82rem;
+      text-transform: uppercase;
+    }
+
+    .row-out { background: var(--red-bg); color: #7f1d1d; }
+    .row-low { background: var(--amber-bg); }
+
+    .stock-badge {
+      display: inline-block;
+      min-width: 96px;
+      padding: 6px 8px;
+      border-radius: 999px;
+      text-align: center;
+      font-size: .82rem;
+      font-weight: 800;
+    }
+
+    .stock-badge.available { background: var(--green-bg); color: var(--green); }
+    .stock-badge.low { background: var(--amber-bg); color: var(--amber); }
+    .stock-badge.out { background: #fecaca; color: var(--red); }
+
+    .cart-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1.8fr) 120px 120px 120px 44px;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+
+    .cart-title { font-weight: 800; line-height: 1.25; }
+    .cart-meta { margin-top: 4px; color: var(--muted); font-size: .9rem; }
+
+    .total-bar {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 14px 16px;
+      border-radius: 8px;
+      background: #e8f5f3;
+      color: var(--teal);
+      font-size: 1.1rem;
+      font-weight: 800;
+    }
+
+    .btn-main { min-height: 46px; font-weight: 800; }
+
+    @media (max-width: 840px) {
+      .topbar, .source-grid, .status-strip, .cart-row { display: grid; grid-template-columns: 1fr; }
+      .ris-no { width: 100%; text-align: left; }
+      table.inventory { min-width: 900px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <div class="topbar">
+      <div>
+        <h1>Requisition Issuance Slip Portal</h1>
+        <p class="subtitle">Choose a source, select items, and submit the request.</p>
+      </div>
+      <div class="ris-no"><span>RIS No.</span><strong id="risNo">Loading...</strong></div>
+    </div>
+
+    <div id="message" class="message"></div>
+
+    <section class="panel">
+      <div class="panel-header"><h2 class="panel-title">1. Choose request type</h2></div>
+      <div class="panel-body"><div id="sourceButtons" class="source-grid"></div></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header"><h2 class="panel-title">2. Choose program</h2></div>
+      <div class="panel-body">
+        <div class="row g-3 align-items-end">
+          <div class="col-lg-8">
+            <label class="form-label fw-bold" for="programSelect">Program / End User</label>
+            <select id="programSelect" class="form-select form-select-lg" disabled>
+              <option value="">Choose Medicine or Supplies first</option>
+            </select>
+          </div>
+          <div class="col-lg-4">
+            <button id="loadInventoryBtn" class="btn btn-primary btn-main w-100" disabled onclick="loadInventory()">Show Items</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="inventoryPanel" class="panel" style="display:none;">
+      <div class="panel-header">
+        <h2 class="panel-title">3. Add items</h2>
+        <span id="sourceLabel" class="badge text-bg-light"></span>
+      </div>
+      <div class="panel-body">
+        <div class="status-strip">
+          <div class="status-box available"><strong id="availableCount">0</strong><span>Available</span></div>
+          <div class="status-box low"><strong id="lowCount">0</strong><span>Low stock</span></div>
+          <div class="status-box out"><strong id="outCount">0</strong><span>Out of stock</span></div>
+        </div>
+        <div class="row g-2 mb-2">
+          <div class="col-lg-9"><input id="searchInput" class="form-control" type="search" placeholder="Search item, code, PO, batch, supplier" oninput="renderInventory()"></div>
+          <div class="col-lg-3">
+            <select id="statusFilter" class="form-select" onchange="renderInventory()">
+              <option value="">All stock status</option>
+              <option value="available">Available only</option>
+              <option value="low">Low stock only</option>
+              <option value="out">Out of stock only</option>
+            </select>
+          </div>
+        </div>
+        <div class="inventory-wrap">
+          <table class="table table-sm table-hover align-middle inventory">
+            <thead><tr><th>Stock</th><th>Code</th><th>Item</th><th>UOM</th><th>PO/PTR</th><th>Batch/Lot</th><th>Expiry</th><th>SOH</th><th>Cost</th><th></th></tr></thead>
+            <tbody id="inventoryBody"><tr><td colspan="10" class="text-center text-muted p-4">Choose a program, then show items.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header"><h2 class="panel-title">4. Request details</h2></div>
+      <div class="panel-body">
+        <div class="row g-3">
+          <div class="col-md-4"><label class="form-label fw-bold" for="deliveryDate">Delivery Date</label><input id="deliveryDate" class="form-control" type="date" onchange="validateDeliveryDate()"><div id="dateHelp" class="form-text">Allowed dates are Monday to Thursday after the required lead time.</div></div>
+          <div class="col-md-4"><label class="form-label fw-bold" for="deliveryLocation">Delivery Location / Office</label><input id="deliveryLocation" class="form-control" type="text"></div>
+          <div class="col-md-4"><label class="form-label fw-bold" for="requestorEmail">Requestor Email</label><input id="requestorEmail" class="form-control" type="email"></div>
+          <div class="col-md-4"><label class="form-label fw-bold" for="requestedBy">Requested By</label><input id="requestedBy" class="form-control" type="text"></div>
+          <div class="col-md-4"><label class="form-label fw-bold" for="approvedBy">Approved By</label><input id="approvedBy" class="form-control" type="text"></div>
+          <div class="col-md-4"><label class="form-label fw-bold" for="receivedBy">Received By</label><input id="receivedBy" class="form-control" type="text"></div>
+          <div class="col-md-4"><label class="form-label fw-bold" for="issuedBy">Issued By</label><input id="issuedBy" class="form-control" type="text"></div>
+          <div class="col-md-8"><label class="form-label fw-bold" for="purpose">Purpose</label><input id="purpose" class="form-control" type="text"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header"><h2 class="panel-title">Selected items</h2></div>
+      <div class="panel-body">
+        <div id="cartBody" class="mb-3"><div class="text-muted">No items added yet.</div></div>
+        <div class="total-bar"><span>Total Request Amount</span><span id="grandTotal">PHP 0.00</span></div>
+      </div>
+    </section>
+
+    <button id="submitBtn" class="btn btn-success btn-lg btn-main w-100" onclick="submitRis()">Submit RIS Request</button>
+  </main>
+
+  <script>
+    var setupData = null;
+    var selectedSourceKey = '';
+    var currentInventory = [];
+    var selectedItems = [];
+    var holidays = [];
+
+    window.addEventListener('load', function() {
+      setMessage('Loading setup...', 'info');
+      google.script.run
+        .withSuccessHandler(initialize)
+        .withFailureHandler(function(error) { setMessage('Setup failed: ' + getErrorMessage(error), 'error'); })
+        .getInitialData();
+    });
+
+    function initialize(response) {
+      if (!response || !response.success) {
+        setMessage('Setup failed: ' + getErrorMessage(response), 'error');
+        return;
+      }
+      setupData = response;
+      holidays = response.holidays || [];
+      document.getElementById('risNo').textContent = response.nextRisNo || 'Auto';
+      renderSourceButtons();
+      setupDeliveryDate();
+      setMessage('', '');
+    }
+
+    function renderSourceButtons() {
+      var target = document.getElementById('sourceButtons');
+      var sources = setupData.sources || [];
+      if (!sources.length) {
+        target.innerHTML = '<div class="message error" style="display:block;">No RIS sources found. Check the RIS Sources sheet.</div>';
+        return;
+      }
+      target.innerHTML = sources.map(function(source) {
+        var active = selectedSourceKey === source.sourceKey ? ' active' : '';
+        return '<button type="button" class="source-button' + active + '" onclick="selectSource(\'' + escapeJs(source.sourceKey) + '\')"><strong>' + escapeHtml(source.buttonName) + '</strong><span>' + escapeHtml(source.sourceSheetName) + '</span></button>';
+      }).join('');
+    }
+
+    function selectSource(sourceKey) {
+      selectedSourceKey = sourceKey;
+      currentInventory = [];
+      selectedItems = [];
+      renderSourceButtons();
+      renderCart();
+      document.getElementById('inventoryPanel').style.display = 'none';
+
+      var source = getSelectedSource();
+      var programs = (setupData.programsBySource && setupData.programsBySource[sourceKey]) || [];
+      var select = document.getElementById('programSelect');
+      select.disabled = false;
+      select.innerHTML = '<option value="">Choose program...</option>' + programs.map(function(program) {
+        return '<option value="' + escapeAttr(program) + '">' + escapeHtml(program) + '</option>';
+      }).join('');
+
+      document.getElementById('loadInventoryBtn').disabled = false;
+      document.getElementById('sourceLabel').textContent = source ? source.buttonName : '';
+      var warning = setupData.sourceWarnings && setupData.sourceWarnings[sourceKey];
+      setMessage(warning ? 'Source warning: ' + warning : '', warning ? 'error' : '');
+    }
+
+    function loadInventory() {
+      var program = document.getElementById('programSelect').value;
+      if (!selectedSourceKey) return setMessage('Choose Medicine or Supplies first.', 'error');
+      if (!program) return setMessage('Choose a program first.', 'error');
+
+      setBusy(true);
+      setMessage('Loading items...', 'info');
+      google.script.run
+        .withSuccessHandler(function(response) {
+          setBusy(false);
+          if (!response || !response.success) return setMessage('Could not load items: ' + getErrorMessage(response), 'error');
+          currentInventory = response.data || [];
+          updateStatusCounts(response.statusCounts || {});
+          document.getElementById('inventoryPanel').style.display = 'block';
+          renderInventory();
+          setMessage('', '');
+        })
+        .withFailureHandler(function(error) {
+          setBusy(false);
+          setMessage('Could not load items: ' + getErrorMessage(error), 'error');
+        })
+        .getInventoryData(selectedSourceKey, program);
+    }
+
+    function updateStatusCounts(counts) {
+      document.getElementById('availableCount').textContent = counts.available || 0;
+      document.getElementById('lowCount').textContent = counts.low || 0;
+      document.getElementById('outCount').textContent = counts.out || 0;
+    }
+
+    function renderInventory() {
+      var body = document.getElementById('inventoryBody');
+      var search = normalize(document.getElementById('searchInput').value);
+      var status = document.getElementById('statusFilter').value;
+      var rows = currentInventory.slice();
+      if (status) rows = rows.filter(function(item) { return item.status === status; });
+      if (search) {
+        rows = rows.filter(function(item) {
+          return normalize([item.itemCode, item.itemDescription, item.poNumber, item.batch, item.supplier].join(' ')).indexOf(search) !== -1;
+        });
+      }
+      if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="10" class="text-center text-muted p-4">No matching items found.</td></tr>';
+        return;
+      }
+      body.innerHTML = rows.map(function(item) {
+        var disabled = item.status === 'out' ? ' disabled' : '';
+        var rowClass = item.status === 'out' ? 'row-out' : (item.status === 'low' ? 'row-low' : '');
+        var buttonText = item.status === 'out' ? 'Cannot Add' : 'Add';
+        return '<tr class="' + rowClass + '"><td><span class="stock-badge ' + escapeAttr(item.status) + '">' + escapeHtml(item.statusLabel) + '</span></td><td>' + escapeHtml(item.itemCode) + '</td><td><strong>' + escapeHtml(item.itemDescription) + '</strong><div class="text-muted small">' + escapeHtml(item.supplier || '') + '</div></td><td>' + escapeHtml(item.uom) + '</td><td>' + escapeHtml(item.poNumber) + '</td><td>' + escapeHtml(item.batch) + '</td><td>' + escapeHtml(item.expiry) + '</td><td class="text-end fw-bold">' + number(item.stock, 0) + '</td><td class="text-end">' + money(item.unitCost) + '</td><td><button class="btn btn-sm btn-primary" onclick="addItem(' + Number(item.sourceRow) + ')"' + disabled + '>' + buttonText + '</button></td></tr>';
+      }).join('');
+    }
+
+    function addItem(sourceRow) {
+      var item = currentInventory.find(function(row) { return Number(row.sourceRow) === Number(sourceRow); });
+      if (!item) return;
+      if (item.status === 'out') return setMessage('This item is out of stock.', 'error');
+
+      var existing = selectedItems.find(function(row) { return Number(row.sourceRow) === Number(sourceRow) && row.sourceSheet === item.sourceSheet; });
+      if (existing) {
+        existing.qtyRequested = Math.min(Number(existing.qtyRequested || 0) + 1, Number(item.stock || 0));
+        existing.issuedQty = existing.qtyRequested;
+      } else {
+        selectedItems.push({
+          sourceKey: item.sourceKey,
+          sourceSpreadsheetId: item.sourceSpreadsheetId,
+          sourceSheet: item.sourceSheet,
+          sourceRow: item.sourceRow,
+          sourceHeaderRow: item.sourceHeaderRow,
+          itemCode: item.itemCode,
+          itemDescription: item.itemDescription,
+          uom: item.uom,
+          poNumber: item.poNumber,
+          supplier: item.supplier,
+          batch: item.batch,
+          expiry: item.expiry,
+          currentSoh: item.stock,
+          qtyRequested: 1,
+          issuedQty: 1,
+          unitCost: item.unitCost,
+          remarks: item.remarks || ''
+        });
+      }
+      renderCart();
+      setMessage('', '');
+    }
+
+    function renderCart() {
+      var target = document.getElementById('cartBody');
+      if (!selectedItems.length) {
+        target.innerHTML = '<div class="text-muted">No items added yet.</div>';
+        document.getElementById('grandTotal').textContent = 'PHP 0.00';
+        return;
+      }
+      target.innerHTML = selectedItems.map(function(item, index) {
+        var total = Number(item.qtyRequested || 0) * Number(item.unitCost || 0);
+        return '<div class="cart-row"><div><div class="cart-title">' + escapeHtml(item.itemDescription) + '</div><div class="cart-meta">' + escapeHtml(item.itemCode) + ' | SOH: ' + number(item.currentSoh, 0) + ' | ' + escapeHtml(item.uom) + '</div></div><div><label class="form-label small fw-bold">Qty</label><input class="form-control" type="number" min="1" max="' + Number(item.currentSoh || 0) + '" value="' + Number(item.qtyRequested || 1) + '" onchange="updateQty(' + index + ', this.value)"></div><div><label class="form-label small fw-bold">Unit Cost</label><div class="form-control bg-light">' + money(item.unitCost) + '</div></div><div><label class="form-label small fw-bold">Total</label><div class="form-control bg-light">' + money(total) + '</div></div><button class="btn btn-outline-danger" title="Remove item" onclick="removeItem(' + index + ')">X</button></div>';
+      }).join('');
+      document.getElementById('grandTotal').textContent = money(getGrandTotal());
+    }
+
+    function updateQty(index, value) {
+      var item = selectedItems[index];
+      if (!item) return;
+      var qty = Number(value);
+      var stock = Number(item.currentSoh || 0);
+      if (!qty || qty < 1) item.qtyRequested = 1;
+      else if (qty > stock) {
+        item.qtyRequested = stock;
+        setMessage('Quantity was lowered to the available stock.', 'info');
+      } else item.qtyRequested = qty;
+      item.issuedQty = item.qtyRequested;
+      renderCart();
+    }
+
+    function removeItem(index) {
+      selectedItems.splice(index, 1);
+      renderCart();
+    }
+
+    function submitRis() {
+      var payload = {
+        sourceKey: selectedSourceKey,
+        requestorProgram: document.getElementById('programSelect').value,
+        deliveryDate: document.getElementById('deliveryDate').value,
+        deliveryLocation: document.getElementById('deliveryLocation').value,
+        requestorEmail: document.getElementById('requestorEmail').value,
+        requestedBy: document.getElementById('requestedBy').value,
+        approvedBy: document.getElementById('approvedBy').value,
+        issuedBy: document.getElementById('issuedBy').value,
+        receivedBy: document.getElementById('receivedBy').value,
+        purpose: document.getElementById('purpose').value,
+        items: selectedItems
+      };
+      var validation = validatePayload(payload);
+      if (validation) return setMessage(validation, 'error');
+
+      setBusy(true);
+      setMessage('Saving RIS request...', 'info');
+      google.script.run
+        .withSuccessHandler(function(response) {
+          setBusy(false);
+          if (!response || !response.success) return setMessage('RIS was not saved: ' + getErrorMessage(response), 'error');
+          selectedItems = [];
+          renderCart();
+          setMessage('Success. RIS saved: ' + response.risNo + (response.testingMode ? ' Testing mode: stock was not deducted.' : ''), 'success');
+          refreshRisNo();
+        })
+        .withFailureHandler(function(error) {
+          setBusy(false);
+          setMessage('RIS was not saved: ' + getErrorMessage(error), 'error');
+        })
+        .submitTransaction(payload);
+    }
+
+    function validatePayload(payload) {
+      if (!payload.sourceKey) return 'Choose Medicine or Supplies.';
+      if (!payload.requestorProgram) return 'Choose a program.';
+      if (!payload.deliveryDate || !validateDeliveryDate()) return 'Choose an allowed delivery date.';
+      if (!payload.deliveryLocation.trim()) return 'Enter the delivery location.';
+      if (!payload.requestorEmail.trim()) return 'Enter the requestor email.';
+      if (!payload.requestedBy.trim()) return 'Enter Requested By.';
+      if (!payload.approvedBy.trim()) return 'Enter Approved By.';
+      if (!payload.receivedBy.trim()) return 'Enter Received By.';
+      if (!payload.items.length) return 'Add at least one item.';
+      for (var i = 0; i < payload.items.length; i++) {
+        if (Number(payload.items[i].qtyRequested) > Number(payload.items[i].currentSoh)) return 'One item has a quantity greater than its stock.';
+      }
+      return '';
+    }
+
+    function refreshRisNo() {
+      google.script.run.withSuccessHandler(function(response) {
+        if (response && response.success) document.getElementById('risNo').textContent = response.risNo;
+      }).getNextRisNo();
+    }
+
+    function setupDeliveryDate() {
+      document.getElementById('deliveryDate').min = toDateInputValue(addAllowedWorkingDays(new Date(), setupData.minimumWorkingDays || 5));
+    }
+
+    function validateDeliveryDate() {
+      var value = document.getElementById('deliveryDate').value;
+      var help = document.getElementById('dateHelp');
+      if (!value) return false;
+      var date = new Date(value + 'T00:00:00');
+      var day = date.getDay();
+      var blocked = day === 0 || day === 5 || day === 6 || holidays.indexOf(toDateInputValue(date)) !== -1;
+      var tooSoon = dateOnly(date).getTime() < addAllowedWorkingDays(new Date(), setupData.minimumWorkingDays || 5).getTime();
+      if (blocked || tooSoon) {
+        help.className = 'form-text text-danger fw-bold';
+        help.textContent = 'This date is not allowed. Choose Monday to Thursday after the required lead time.';
+        return false;
+      }
+      help.className = 'form-text text-success fw-bold';
+      help.textContent = 'Delivery date is allowed.';
+      return true;
+    }
+
+    function addAllowedWorkingDays(startDate, days) {
+      var date = dateOnly(startDate);
+      var added = 0;
+      while (added < days) {
+        date.setDate(date.getDate() + 1);
+        var day = date.getDay();
+        if (day !== 0 && day !== 5 && day !== 6 && holidays.indexOf(toDateInputValue(date)) === -1) added += 1;
+      }
+      return date;
+    }
+
+    function getSelectedSource() {
+      return (setupData.sources || []).find(function(source) { return source.sourceKey === selectedSourceKey; });
+    }
+
+    function getGrandTotal() {
+      return selectedItems.reduce(function(sum, item) { return sum + Number(item.qtyRequested || 0) * Number(item.unitCost || 0); }, 0);
+    }
+
+    function setBusy(isBusy) {
+      document.getElementById('submitBtn').disabled = isBusy;
+      document.getElementById('loadInventoryBtn').disabled = isBusy || !selectedSourceKey;
+      document.getElementById('submitBtn').textContent = isBusy ? 'Please wait...' : 'Submit RIS Request';
+    }
+
+    function setMessage(text, type) {
+      var target = document.getElementById('message');
+      target.className = type ? 'message ' + type : 'message';
+      target.textContent = text || '';
+    }
+
+    function getErrorMessage(error) {
+      if (!error) return 'No response returned.';
+      if (typeof error === 'string') return error;
+      return error.error || error.message || JSON.stringify(error);
+    }
+
+    function normalize(value) { return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+    function dateOnly(date) { return new Date(date.getFullYear(), date.getMonth(), date.getDate()); }
+    function toDateInputValue(date) { return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0'); }
+    function number(value, decimals) { return Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }); }
+    function money(value) { return 'PHP ' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+    function escapeJs(value) { return String(value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+    function escapeAttr(value) { return escapeHtml(value).replace(/`/g, '&#096;'); }
+    function escapeHtml(value) {
+      return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, function(char) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[char];
+      });
+    }
+  </script>
+</body>
+</html>
