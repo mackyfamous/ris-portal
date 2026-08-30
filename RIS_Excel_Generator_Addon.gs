@@ -1,0 +1,446 @@
+// ==========================================
+// RIS EXCEL GENERATOR ADD-ON
+// ==========================================
+
+const RIS_EXCEL_CONFIG = {
+  templateFileId: 'PASTE_RIS_EXCEL_TEMPLATE_FILE_ID',
+  outputFolderId: 'PASTE_EXCEL_OUTPUT_FOLDER_ID',
+  notificationSubjectPrefix: '[RIS Excel] Generated: ',
+  divisionName: 'CITY HEALTH DEPARTMENT',
+  itemStartRow: 10,
+  itemEndRow: 40,
+  sheetName: '',
+  stockAvailableMark: 'YES',
+  stockUnavailableMark: 'NO',
+  xlsxMimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  headerCells: {
+    office: 'C6',
+    division: 'C7',
+    risNo: 'J7',
+    date: 'M7',
+    purpose: 'C42',
+    requestedBy: 'C46',
+    approvedBy: 'D46',
+    issuedBy: 'H46',
+    receivedBy: 'L46',
+    preparedBy: 'C49'
+  },
+  itemColumns: {
+    itemCode: 2,
+    itemDescription: 3,
+    uom: 4,
+    poWithSupplier: 5,
+    batch: 6,
+    expiry: 7,
+    qtyRequested: 8,
+    stockYes: 9,
+    stockNo: 10,
+    issuedQty: 11,
+    unitCost: 12,
+    totalCost: 13,
+    remarks: 14
+  },
+  requiredFields: [
+    'itemCode',
+    'itemDescription',
+    'uom',
+    'qtyRequested',
+    'issuedQty',
+    'unitCost'
+  ],
+  recoverableFields: [
+    'itemCode',
+    'itemDescription',
+    'uom',
+    'poNumber',
+    'supplier',
+    'batch',
+    'expiry',
+    'unitCost',
+    'remarks'
+  ]
+};
+
+function risExcelAddMenu_() {
+  SpreadsheetApp.getUi()
+    .createMenu('RIS Excel Tools')
+    .addItem('Authorize Excel generator', 'risExcelAuthorize')
+    .addItem('Generate Excel for selected RIS', 'risExcelGenerateForSelectedRIS')
+    .addItem('Generate Excel by RIS No.', 'risExcelGenerateByRisNoPrompt')
+    .addToUi();
+}
+
+function risExcelAuthorize() {
+  risExcelAssertConfigured_();
+  const ss = risCoreGetTransactionsSpreadsheet_();
+  const recipients = risCoreReadEmailRecipients_(ss);
+  const target = recipients.to[0] || Session.getActiveUser().getEmail();
+  if (!target) throw new Error('Add an email address in the Emails sheet before authorizing.');
+
+  MailApp.sendEmail({
+    to: target,
+    subject: 'RIS Excel generator authorization test',
+    body: 'This test email confirms that RIS Excel generation notifications are authorized.'
+  });
+}
+
+function risExcelGenerateForSelectedRIS() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const risNo = risExcelGetSelectedRisNo_();
+    const username = risExcelPromptUsername_('Generate Excel for ' + risNo);
+    if (!username) return;
+
+    const result = risExcelGenerateByRisNo_(risNo, username);
+    ui.alert(risExcelResultMessage_(result));
+  } catch (error) {
+    ui.alert('Could not generate RIS Excel:\n\n' + risCoreErrorMessage_(error));
+  }
+}
+
+function risExcelGenerateByRisNoPrompt() {
+  const ui = SpreadsheetApp.getUi();
+  const risResponse = ui.prompt('Generate RIS Excel', 'Enter RIS No. or Record ID:', ui.ButtonSet.OK_CANCEL);
+  if (risResponse.getSelectedButton() !== ui.Button.OK) return;
+
+  const risNo = risResponse.getResponseText().trim();
+  if (!risNo) {
+    ui.alert('Please enter a RIS No. or Record ID.');
+    return;
+  }
+
+  const username = risExcelPromptUsername_('Generate Excel for ' + risNo);
+  if (!username) return;
+
+  try {
+    const result = risExcelGenerateByRisNo_(risNo, username);
+    ui.alert(risExcelResultMessage_(result));
+  } catch (error) {
+    ui.alert('Could not generate RIS Excel:\n\n' + risCoreErrorMessage_(error));
+  }
+}
+
+function risExcelGenerateByRisNo(risNo, username) {
+  return risExcelGenerateByRisNo_(risNo, username);
+}
+
+function risExcelGenerateByRisNo_(risNo, username) {
+  risExcelAssertConfigured_();
+  const user = risCoreValidateActiveUser_(username);
+  const bundle = risCoreGetRisBundle_(risNo);
+  const prepared = risExcelPrepareItems_(bundle.items);
+
+  if (prepared.items.length === 0) {
+    throw new Error('No RIS items were found for ' + risNo + '.');
+  }
+
+  if (prepared.items.length > RIS_EXCEL_CONFIG.itemEndRow - RIS_EXCEL_CONFIG.itemStartRow + 1) {
+    throw new Error('This RIS has more item rows than the Excel template can fit.');
+  }
+
+  const workingSpreadsheet = risExcelCreateEditableTemplateCopy_(bundle.entry.risNo);
+  let outputFile = null;
+
+  try {
+    const sheet = risExcelGetTargetSheet_(workingSpreadsheet);
+    risExcelFillTemplate_(sheet, bundle.entry, prepared.items, user);
+    SpreadsheetApp.flush();
+    outputFile = risExcelExportToXlsx_(workingSpreadsheet, bundle.entry.risNo);
+
+    risCoreUpdateRecordFields_(
+      bundle.entriesSheet,
+      bundle.entry.rowNumber,
+      RIS_ENTRIES_DEFAULT_HEADERS,
+      RIS_ENTRIES_ALIASES,
+      {
+        excelUrl: outputFile.getUrl(),
+        excelGeneratedAt: new Date(),
+        excelGeneratedBy: user.fullName + ' (' + user.username + ')'
+      }
+    );
+
+    risExcelSendNotification_(bundle.ss, bundle.entry, prepared.items, outputFile, user, prepared.report);
+  } finally {
+    try {
+      DriveApp.getFileById(workingSpreadsheet.getId()).setTrashed(true);
+    } catch (cleanupError) {
+      // Keep the generated file even if cleanup of the temporary Google Sheet fails.
+    }
+  }
+
+  return {
+    success: true,
+    risNo: bundle.entry.risNo,
+    url: outputFile.getUrl(),
+    generatedBy: user.fullName,
+    report: prepared.report
+  };
+}
+
+function risExcelGetSelectedRisNo_() {
+  const sheet = SpreadsheetApp.getActiveSheet();
+  if (!sheet || sheet.getName() !== RIS_CONFIG.entriesSheetName) {
+    throw new Error('Please select a row in the "' + RIS_CONFIG.entriesSheetName + '" sheet.');
+  }
+
+  const range = sheet.getActiveRange();
+  if (!range || range.getRow() <= 1) {
+    throw new Error('Please select a RIS data row.');
+  }
+
+  const info = risCoreGetHeaderInfo_(sheet, RIS_ENTRIES_DEFAULT_HEADERS, RIS_ENTRIES_ALIASES);
+  const row = sheet.getRange(range.getRow(), 1, 1, sheet.getLastColumn()).getValues()[0];
+  const risNo = info.columns.risNo ? row[info.columns.risNo - 1] : '';
+  const recordId = info.columns.recordId ? row[info.columns.recordId - 1] : '';
+  return risNo || recordId;
+}
+
+function risExcelPromptUsername_(title) {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.prompt(title, 'Enter your username:', ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return '';
+  return response.getResponseText().trim();
+}
+
+function risExcelAssertConfigured_() {
+  if (!RIS_EXCEL_CONFIG.templateFileId || RIS_EXCEL_CONFIG.templateFileId.indexOf('PASTE_') === 0) {
+    throw new Error('Configure RIS_EXCEL_CONFIG.templateFileId first.');
+  }
+  if (!RIS_EXCEL_CONFIG.outputFolderId || RIS_EXCEL_CONFIG.outputFolderId.indexOf('PASTE_') === 0) {
+    throw new Error('Configure RIS_EXCEL_CONFIG.outputFolderId first.');
+  }
+}
+
+function risExcelCreateEditableTemplateCopy_(risNo) {
+  const title = risExcelSafeFileName_(risNo) + ' - RIS Excel Working Copy';
+  const templateFile = DriveApp.getFileById(RIS_EXCEL_CONFIG.templateFileId);
+  const folder = DriveApp.getFolderById(RIS_EXCEL_CONFIG.outputFolderId);
+
+  if (templateFile.getMimeType() === MimeType.GOOGLE_SHEETS) {
+    const copy = templateFile.makeCopy(title, folder);
+    return SpreadsheetApp.openById(copy.getId());
+  }
+
+  if (typeof Drive === 'undefined' || !Drive.Files || !Drive.Files.copy) {
+    throw new Error('Enable the Advanced Drive service to use an Excel template file.');
+  }
+
+  const resource = {
+    title: title,
+    mimeType: MimeType.GOOGLE_SHEETS,
+    parents: [{ id: RIS_EXCEL_CONFIG.outputFolderId }]
+  };
+  const converted = Drive.Files.copy(resource, RIS_EXCEL_CONFIG.templateFileId);
+  return SpreadsheetApp.openById(converted.id);
+}
+
+function risExcelGetTargetSheet_(spreadsheet) {
+  if (RIS_EXCEL_CONFIG.sheetName) {
+    const named = spreadsheet.getSheetByName(RIS_EXCEL_CONFIG.sheetName);
+    if (!named) throw new Error('Template sheet not found: ' + RIS_EXCEL_CONFIG.sheetName);
+    return named;
+  }
+  return spreadsheet.getSheets()[0];
+}
+
+function risExcelPrepareItems_(items) {
+  const report = [];
+  const prepared = items.map(function(item, index) {
+    let recovered = {};
+    try {
+      recovered = risCoreRecoverInventoryDataForItem_(item);
+    } catch (error) {
+      report.push({
+        row: index + 1,
+        field: 'source inventory',
+        status: 'missing',
+        message: risCoreErrorMessage_(error)
+      });
+    }
+
+    const finalItem = {};
+    RIS_EXCEL_CONFIG.recoverableFields.forEach(function(field) {
+      finalItem[field] = risExcelChooseValue_(item[field], recovered[field], report, index + 1, field);
+    });
+
+    finalItem.qtyRequested = risCoreParseNumber_(item.qtyRequested);
+    finalItem.issuedQty = risCoreParseNumber_(item.issuedQty || item.qtyRequested);
+    finalItem.currentSoh = risCoreParseNumber_(item.currentSoh || recovered.stock);
+    finalItem.totalCost = finalItem.issuedQty * risCoreParseNumber_(finalItem.unitCost);
+    finalItem.stockAvailable = finalItem.currentSoh > 0;
+    finalItem.remarks = finalItem.remarks || item.remarks || '';
+
+    RIS_EXCEL_CONFIG.requiredFields.forEach(function(field) {
+      if (finalItem[field] === '' || finalItem[field] === null || finalItem[field] === undefined) {
+        report.push({
+          row: index + 1,
+          field: field,
+          status: 'missing',
+          message: 'Required field is blank after database and inventory lookup.'
+        });
+      }
+    });
+
+    finalItem.poWithSupplier = risExcelPoWithSupplier_(finalItem);
+    return finalItem;
+  });
+
+  const missingRequired = report.filter(function(row) {
+    return row.status === 'missing' && RIS_EXCEL_CONFIG.requiredFields.indexOf(row.field) !== -1;
+  });
+
+  if (missingRequired.length > 0) {
+    throw new Error('RIS Excel required fields are missing:\n' + risExcelReportLines_(missingRequired).join('\n'));
+  }
+
+  return { items: prepared, report: report };
+}
+
+function risExcelChooseValue_(databaseValue, inventoryValue, report, rowNumber, field) {
+  const dbText = databaseValue === null || databaseValue === undefined ? '' : databaseValue;
+  if (dbText !== '') {
+    if (inventoryValue !== '' && inventoryValue !== null && inventoryValue !== undefined &&
+        String(dbText) !== String(inventoryValue)) {
+      report.push({
+        row: rowNumber,
+        field: field,
+        status: 'mismatch',
+        databaseValue: dbText,
+        inventoryValue: inventoryValue,
+        finalValue: dbText
+      });
+    }
+    return dbText;
+  }
+
+  if (inventoryValue !== '' && inventoryValue !== null && inventoryValue !== undefined) {
+    report.push({
+      row: rowNumber,
+      field: field,
+      status: 'recovered',
+      databaseValue: '',
+      inventoryValue: inventoryValue,
+      finalValue: inventoryValue
+    });
+    return inventoryValue;
+  }
+
+  return '';
+}
+
+function risExcelFillTemplate_(sheet, entry, items, user) {
+  const cells = RIS_EXCEL_CONFIG.headerCells;
+  sheet.getRange(cells.office).setValue(entry.deliveryLocation || entry.requestorProgram || '');
+  sheet.getRange(cells.division).setValue(RIS_EXCEL_CONFIG.divisionName);
+  sheet.getRange(cells.risNo).setValue(entry.risNo || entry.recordId || '');
+  sheet.getRange(cells.date).setValue(entry.deliveryDate || new Date());
+  sheet.getRange(cells.purpose).setValue(entry.purpose || '');
+  sheet.getRange(cells.requestedBy).setValue(entry.requestedBy || '');
+  sheet.getRange(cells.approvedBy).setValue(entry.approvedBy || '');
+  sheet.getRange(cells.issuedBy).setValue(entry.issuedBy || '');
+  sheet.getRange(cells.receivedBy).setValue(entry.receivedBy || '');
+  sheet.getRange(cells.preparedBy).setValue(user.fullName + ' / ' + user.username);
+
+  const start = RIS_EXCEL_CONFIG.itemStartRow;
+  const end = RIS_EXCEL_CONFIG.itemEndRow;
+  sheet.getRange(start, 2, end - start + 1, 13).clearContent();
+
+  items.forEach(function(item, index) {
+    const row = start + index;
+    sheet.getRange(row, 2, 1, 13).setValues([[
+      item.itemCode,
+      item.itemDescription,
+      item.uom,
+      item.poWithSupplier,
+      item.batch,
+      item.expiry,
+      item.qtyRequested,
+      item.stockAvailable ? RIS_EXCEL_CONFIG.stockAvailableMark : '',
+      item.stockAvailable ? '' : RIS_EXCEL_CONFIG.stockUnavailableMark,
+      item.issuedQty,
+      item.unitCost,
+      '',
+      item.remarks
+    ]]);
+    sheet.getRange(row, RIS_EXCEL_CONFIG.itemColumns.totalCost).setFormula('=K' + row + '*L' + row);
+  });
+
+  sheet.getRange('M41').setFormula('=SUM(M' + start + ':M' + end + ')');
+}
+
+function risExcelExportToXlsx_(spreadsheet, risNo) {
+  if (typeof Drive === 'undefined' || !Drive.Files || !Drive.Files.export) {
+    throw new Error('Enable the Advanced Drive service to export the generated Excel file.');
+  }
+
+  const folder = DriveApp.getFolderById(RIS_EXCEL_CONFIG.outputFolderId);
+  const fileName = risExcelSafeFileName_(risNo) + ' - RIS.xlsx';
+  const blob = Drive.Files.export(spreadsheet.getId(), RIS_EXCEL_CONFIG.xlsxMimeType);
+  blob.setName(fileName);
+  return folder.createFile(blob);
+}
+
+function risExcelSendNotification_(ss, entry, items, file, user, report) {
+  const recipients = risCoreReadEmailRecipients_(ss);
+  const to = recipients.to.slice();
+  if (entry.requestorEmail) to.push(entry.requestorEmail);
+  if (to.length === 0) return;
+
+  const warnings = report.filter(function(row) {
+    return row.status === 'recovered' || row.status === 'mismatch' || row.status === 'missing';
+  });
+
+  const html = [
+    '<div style="font-family:Arial,sans-serif;font-size:14px;color:#172033;">',
+    '<h2 style="margin:0 0 12px;color:#0f766e;">RIS Excel Generated</h2>',
+    '<p>The RIS Excel file was generated.</p>',
+    '<p><b>RIS No.:</b> ' + risCoreEscapeHtml_(entry.risNo || entry.recordId) + '</p>',
+    '<p><b>Generated by:</b> ' + risCoreEscapeHtml_(user.fullName + ' (' + user.username + ')') + '</p>',
+    '<p><b>File:</b> <a href="' + risCoreEscapeHtml_(file.getUrl()) + '">Open RIS Excel</a></p>',
+    '<p><b>Items:</b> ' + items.length + '</p>',
+    warnings.length ? '<p><b>Validation notes:</b><br>' + risCoreEscapeHtml_(risExcelReportLines_(warnings).join('\n')).replace(/\n/g, '<br>') + '</p>' : '',
+    '</div>'
+  ].join('');
+
+  MailApp.sendEmail({
+    to: risCoreUnique_(to).join(','),
+    cc: risCoreUnique_(recipients.cc).join(','),
+    subject: RIS_EXCEL_CONFIG.notificationSubjectPrefix + (entry.risNo || entry.recordId),
+    htmlBody: html,
+    body: 'RIS Excel generated: ' + (entry.risNo || entry.recordId) + '\n' + file.getUrl()
+  });
+}
+
+function risExcelResultMessage_(result) {
+  const report = result.report || [];
+  const notes = report.filter(function(row) {
+    return row.status === 'recovered' || row.status === 'mismatch' || row.status === 'missing';
+  });
+  let message = 'RIS Excel generated.\n\nRIS No.: ' + result.risNo + '\nFile: ' + result.url;
+  if (notes.length > 0) {
+    message += '\n\nValidation notes:\n' + risExcelReportLines_(notes).slice(0, 12).join('\n');
+    if (notes.length > 12) message += '\n...and ' + (notes.length - 12) + ' more.';
+  }
+  return message;
+}
+
+function risExcelReportLines_(rows) {
+  return rows.map(function(row) {
+    return 'Item ' + row.row + ' - ' + row.field + ': ' + row.status +
+      (row.message ? ' (' + row.message + ')' : '');
+  });
+}
+
+function risExcelPoWithSupplier_(item) {
+  const po = String(item.poNumber || '').trim();
+  const supplier = String(item.supplier || '').trim();
+  if (po && supplier) return po + ' (' + supplier + ')';
+  return po || supplier;
+}
+
+function risExcelSafeFileName_(value) {
+  return String(value || 'RIS')
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
