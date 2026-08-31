@@ -22,8 +22,11 @@ const RIS_INVENTORY_ALIASES = {
   remarks: ['Remarks', 'Remarks / Program']
 };
 
-function risEnsureSourcesSheet_(ss) {
-  const sheet = risCoreGetOrCreateSheet_(ss, RIS_CONFIG.sourcesSheetName);
+function risEnsureSourcesSheet_(ss, createMissingSheets) {
+  const create = createMissingSheets !== false;
+  const sheet = risCoreGetConfiguredSheet_(ss, RIS_CONFIG.sourcesSheetName, create);
+  if (!create) return sheet;
+
   risCoreEnsureColumns_(sheet, RIS_SOURCES_DEFAULT_HEADERS);
 
   if (sheet.getLastRow() === 1) {
@@ -33,8 +36,8 @@ function risEnsureSourcesSheet_(ss) {
   return sheet;
 }
 
-function risGetSources_(ss) {
-  const rawSources = risGetRawSources_(ss);
+function risGetSources_(ss, createMissingSheets) {
+  const rawSources = risGetRawSources_(ss, createMissingSheets);
   const groups = {};
 
   rawSources.forEach(function(source) {
@@ -68,8 +71,8 @@ function risGetSources_(ss) {
   }).sort(risCompareSources_);
 }
 
-function risGetRawSources_(ss) {
-  const sheet = risEnsureSourcesSheet_(ss);
+function risGetRawSources_(ss, createMissingSheets) {
+  const sheet = risEnsureSourcesSheet_(ss, createMissingSheets);
   const values = sheet.getDataRange().getValues();
   if (values.length < 2) return [];
 
@@ -314,9 +317,9 @@ function risMapInventoryRow_(row, layout, source, rowNumber) {
   };
 }
 
-function risGenerateNextRisNo_(sheet, date) {
-  risCoreEnsureColumns_(sheet, RIS_ENTRIES_DEFAULT_HEADERS);
-  const info = risCoreGetHeaderInfo_(sheet, RIS_ENTRIES_DEFAULT_HEADERS, RIS_ENTRIES_ALIASES);
+function risGenerateNextRisNo_(sheet, date, updateHeaders) {
+  if (!sheet) throw new Error('Required sheet not found: ' + RIS_CONFIG.entriesSheetName + '. Run RIS Portal > Setup required sheets once, or create the tab manually.');
+  const info = risCoreGetHeaderInfo_(sheet, RIS_ENTRIES_DEFAULT_HEADERS, RIS_ENTRIES_ALIASES, updateHeaders);
   const year = Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy');
   const month = Utilities.formatDate(date, Session.getScriptTimeZone(), 'MM');
   const prefix = 'RIS-' + year + '-' + month + '-';
