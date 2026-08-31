@@ -96,27 +96,52 @@ function risCoreOpenSourceSpreadsheet_(source) {
   return risCoreGetTransactionsSpreadsheet_();
 }
 
-function risCoreEnsureTransactionSheets_(ss) {
-  risCoreEnsureColumns_(risCoreGetOrCreateSheet_(ss, RIS_CONFIG.entriesSheetName), RIS_ENTRIES_DEFAULT_HEADERS);
-  risCoreEnsureColumns_(risCoreGetOrCreateSheet_(ss, RIS_CONFIG.itemsSheetName), RIS_ITEMS_DEFAULT_HEADERS);
-  risCoreEnsureEmailSheets_(ss);
-  risCoreEnsureColumns_(risCoreGetOrCreateSheet_(ss, RIS_CONFIG.holidaysSheetName), ['Date', 'Holiday Name']);
+function risCoreEnsureTransactionSheets_(ss, createMissingSheets) {
+  const create = createMissingSheets !== false;
+  const entriesSheet = risCoreGetConfiguredSheet_(ss, RIS_CONFIG.entriesSheetName, create);
+  const itemsSheet = risCoreGetConfiguredSheet_(ss, RIS_CONFIG.itemsSheetName, create);
+  const holidaysSheet = risCoreGetConfiguredSheet_(ss, RIS_CONFIG.holidaysSheetName, create);
+  risCoreEnsureEmailSheets_(ss, create);
+
+  if (!create) return;
+
+  risCoreEnsureColumns_(entriesSheet, RIS_ENTRIES_DEFAULT_HEADERS);
+  risCoreEnsureColumns_(itemsSheet, RIS_ITEMS_DEFAULT_HEADERS);
+  risCoreEnsureColumns_(holidaysSheet, ['Date', 'Holiday Name']);
 }
 
-function risCoreEnsureEmailSheets_(ss) {
-  risCoreEnsureColumnsByAliases_(risCoreGetOrCreateSheet_(ss, RIS_CONFIG.adminEmailsSheetName), [
+function risCoreEnsureEmailSheets_(ss, createMissingSheets) {
+  const create = createMissingSheets !== false;
+  const adminSheet = risCoreGetConfiguredSheet_(ss, RIS_CONFIG.adminEmailsSheetName, create);
+  const clientSheet = risCoreGetConfiguredSheet_(ss, RIS_CONFIG.clientEmailsSheetName, create);
+
+  if (!create) return;
+
+  risCoreEnsureColumnsByAliases_(adminSheet, [
     { header: 'Recipients', aliases: ['Recipients', 'Receipients', 'Recipient', 'Email', 'Email Address', 'TO'] },
     { header: 'Sender', aliases: ['Sender', 'From'] },
     { header: 'Name', aliases: ['Name', 'Full Name'] },
     { header: 'Username', aliases: ['Username', 'User Name'] }
   ]);
 
-  risCoreEnsureColumnsByAliases_(risCoreGetOrCreateSheet_(ss, RIS_CONFIG.clientEmailsSheetName), [
+  risCoreEnsureColumnsByAliases_(clientSheet, [
     { header: 'Recipients', aliases: ['Recipients', 'Receipients', 'Recipient', 'Email', 'Email Address', 'TO'] },
     { header: 'Sender', aliases: ['Sender', 'From'] },
     { header: 'CC', aliases: ['CC', 'Cc', 'Carbon Copy'] },
     { header: 'Subject', aliases: ['Subject', 'Email Subject'] }
   ]);
+}
+
+function risCoreGetConfiguredSheet_(ss, name, createMissingSheets) {
+  return createMissingSheets ? risCoreGetOrCreateSheet_(ss, name) : risCoreGetRequiredSheet_(ss, name);
+}
+
+function risCoreGetRequiredSheet_(ss, name) {
+  const sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    throw new Error('Required sheet not found: ' + name + '. Run RIS Portal > Setup required sheets once, or create the tab manually.');
+  }
+  return sheet;
 }
 
 function risCoreGetOrCreateSheet_(ss, name) {
@@ -160,8 +185,8 @@ function risCoreEnsureColumnsByAliases_(sheet, specs) {
   }
 }
 
-function risCoreGetHeaderInfo_(sheet, defaultHeaders, aliases) {
-  risCoreEnsureColumns_(sheet, defaultHeaders);
+function risCoreGetHeaderInfo_(sheet, defaultHeaders, aliases, updateHeaders) {
+  if (updateHeaders !== false) risCoreEnsureColumns_(sheet, defaultHeaders);
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   const columns = {};
   Object.keys(aliases).forEach(function(field) {
@@ -201,9 +226,9 @@ function risCoreUpdateRecordFields_(sheet, rowNumber, defaultHeaders, aliases, v
 
 function risCoreGetRisBundle_(risNoOrRecordId) {
   const ss = risCoreGetTransactionsSpreadsheet_();
-  risCoreEnsureTransactionSheets_(ss);
-  const entriesSheet = ss.getSheetByName(RIS_CONFIG.entriesSheetName);
-  const itemsSheet = ss.getSheetByName(RIS_CONFIG.itemsSheetName);
+  risCoreEnsureTransactionSheets_(ss, RIS_CONFIG.autoCreateSheets);
+  const entriesSheet = risCoreGetRequiredSheet_(ss, RIS_CONFIG.entriesSheetName);
+  const itemsSheet = risCoreGetRequiredSheet_(ss, RIS_CONFIG.itemsSheetName);
   const key = risCoreNormalizeText_(risNoOrRecordId);
 
   const entry = risCoreReadRecords_(entriesSheet, RIS_ENTRIES_DEFAULT_HEADERS, RIS_ENTRIES_ALIASES, RIS_ENTRIES_FIELD_ORDER).find(function(record) {
@@ -230,13 +255,14 @@ function risCoreRecoverInventoryDataForItem_(item) {
     headerRow: item.sourceHeaderRow || 'auto'
   };
   const ss = risCoreOpenSourceSpreadsheet_(source);
-  const sheet = ss.getSheetByName(source.sourceSheetName);
+  const sheet = typeof risResolveSourceSheet_ === 'function' ? risResolveSourceSheet_(ss, source) : ss.getSheetByName(source.sourceSheetName);
   if (!sheet) return {};
 
-  const layout = risGetInventoryLayout_(sheet, source);
+  const resolvedSource = Object.assign({}, source, { sourceSheetName: sheet.getName() });
+  const layout = risGetInventoryLayout_(sheet, resolvedSource);
   const rowNumber = risCoreParseInteger_(item.sourceRow);
   if (!rowNumber) return {};
-  return risMapInventoryRow_(sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0], layout, source, rowNumber);
+  return risMapInventoryRow_(sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0], layout, resolvedSource, rowNumber);
 }
 
 function risCoreValidateActiveUser_(username) {
