@@ -13,6 +13,11 @@ const RIS_EXCEL_CONFIG = {
   sheetName: '',
   stockAvailableMark: 'ü',
   stockUnavailableMark: 'ü',
+  itemFontSize: 60,
+  itemRowHeight: 350,
+  dateNumberFormat: 'mm-dd-yy',
+  quantityNumberFormat: '#,##0.##',
+  moneyNumberFormat: '#,##0.##',
   nothingFollowsText: '***************** Nothing Follows ****************',
   xlsxMimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   headerCells: {
@@ -336,7 +341,7 @@ function risExcelFillTemplate_(sheet, entry, items, user) {
   sheet.getRange(cells.division).setValue(RIS_EXCEL_CONFIG.divisionName);
   sheet.getRange(cells.risNo).setValue(RIS_EXCEL_CONFIG.risNoLabelPrefix + (entry.risNo || entry.recordId || ''));
   sheet.getRange(cells.date).setValue(entry.deliveryDate || new Date());
-  sheet.getRange(cells.date).setNumberFormat('yyyy-mm-dd');
+  sheet.getRange(cells.date).setNumberFormat(RIS_EXCEL_CONFIG.dateNumberFormat);
   sheet.getRange(cells.purpose).setValue(entry.purpose || '');
   sheet.getRange(cells.requestedBy).setValue(entry.requestedBy || '');
   sheet.getRange(cells.approvedBy).setValue(entry.approvedBy || '');
@@ -346,7 +351,9 @@ function risExcelFillTemplate_(sheet, entry, items, user) {
 
   const start = RIS_EXCEL_CONFIG.itemStartRow;
   const end = RIS_EXCEL_CONFIG.itemEndRow;
-  sheet.getRange(start, 2, end - start + 1, 13).clearContent();
+  const itemRange = sheet.getRange(start, 2, end - start + 1, 13);
+  itemRange.clearContent();
+  risExcelFormatItemArea_(sheet, start, end);
 
   items.forEach(function(item, index) {
     const row = start + index;
@@ -356,7 +363,7 @@ function risExcelFillTemplate_(sheet, entry, items, user) {
       item.uom,
       item.poWithSupplier,
       item.batch,
-      item.expiry,
+      risExcelDateValue_(item.expiry),
       item.qtyRequested,
       item.stockAvailable ? RIS_EXCEL_CONFIG.stockAvailableMark : '',
       item.stockAvailable ? '' : RIS_EXCEL_CONFIG.stockUnavailableMark,
@@ -369,7 +376,29 @@ function risExcelFillTemplate_(sheet, entry, items, user) {
   });
 
   risExcelPlaceNothingFollows_(sheet, start + items.length, end);
-  sheet.getRange('M41').setFormula('=SUM(M' + start + ':M' + end + ')');
+  sheet.getRange('M41')
+    .setFormula('=SUM(M' + start + ':M' + end + ')')
+    .setNumberFormat(RIS_EXCEL_CONFIG.moneyNumberFormat)
+    .setFontSize(RIS_EXCEL_CONFIG.itemFontSize);
+}
+
+function risExcelFormatItemArea_(sheet, start, end) {
+  const columns = RIS_EXCEL_CONFIG.itemColumns;
+  const rowCount = end - start + 1;
+  sheet.getRange(start, 2, rowCount, 13)
+    .setFontSize(RIS_EXCEL_CONFIG.itemFontSize)
+    .setVerticalAlignment('middle');
+  sheet.setRowHeights(start, rowCount, RIS_EXCEL_CONFIG.itemRowHeight);
+  sheet.getRange(start, columns.expiry, rowCount, 1).setNumberFormat(RIS_EXCEL_CONFIG.dateNumberFormat);
+  sheet.getRange(start, columns.qtyRequested, rowCount, 1).setNumberFormat(RIS_EXCEL_CONFIG.quantityNumberFormat);
+  sheet.getRange(start, columns.issuedQty, rowCount, 1).setNumberFormat(RIS_EXCEL_CONFIG.quantityNumberFormat);
+  sheet.getRange(start, columns.unitCost, rowCount, 1).setNumberFormat(RIS_EXCEL_CONFIG.moneyNumberFormat);
+  sheet.getRange(start, columns.totalCost, rowCount, 1).setNumberFormat(RIS_EXCEL_CONFIG.moneyNumberFormat);
+}
+
+function risExcelDateValue_(value) {
+  const date = risCoreParseDate_(value);
+  return date || value || '';
 }
 
 function risExcelPlaceNothingFollows_(sheet, markerRow, endRow) {
