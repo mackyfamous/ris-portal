@@ -236,9 +236,13 @@ function risCoreGetRisBundle_(risNoOrRecordId) {
   });
   if (!entry) throw new Error('RIS record was not found: ' + risNoOrRecordId);
 
+  const entryRisNo = risCoreNormalizeText_(entry.risNo);
+  const entryRecordId = risCoreNormalizeText_(entry.recordId);
   const items = risCoreReadRecords_(itemsSheet, RIS_ITEMS_DEFAULT_HEADERS, RIS_ITEMS_ALIASES, RIS_ITEMS_FIELD_ORDER).filter(function(item) {
-    return risCoreNormalizeText_(item.risNo) === risCoreNormalizeText_(entry.risNo) ||
-      risCoreNormalizeText_(item.recordId) === risCoreNormalizeText_(entry.recordId);
+    const itemRisNo = risCoreNormalizeText_(item.risNo);
+    const itemRecordId = risCoreNormalizeText_(item.recordId);
+    return (entryRisNo && itemRisNo === entryRisNo) ||
+      (entryRecordId && itemRecordId === entryRecordId);
   });
 
   return { ss: ss, entry: entry, items: items, entriesSheet: entriesSheet, itemsSheet: itemsSheet };
