@@ -6,6 +6,7 @@ const RIS_EXCEL_CONFIG = {
   templateFileId: 'PASTE_RIS_EXCEL_TEMPLATE_FILE_ID',
   outputFolderId: 'PASTE_EXCEL_OUTPUT_FOLDER_ID',
   notificationSubjectPrefix: '[RIS Excel] Generated: ',
+  notificationCc: 'lyn4logistics@gmail.com',
   divisionName: 'CITY HEALTH DEPARTMENT',
   risNoLabelPrefix: 'RIS #: ',
   itemStartRow: 10,
@@ -503,9 +504,7 @@ function risExcelSetXmlAttribute_(tag, name, value) {
 }
 
 function risExcelSendNotification_(ss, entry, items, file, user, report) {
-  const recipients = risCoreReadEmailRecipients_(ss);
-  const to = recipients.to.slice();
-  if (entry.requestorEmail) to.push(entry.requestorEmail);
+  const to = risCoreUnique_([risExcelGeneratedByEmail_(ss, user)]);
   if (to.length === 0) return;
 
   const warnings = report.filter(function(row) {
@@ -525,12 +524,64 @@ function risExcelSendNotification_(ss, entry, items, file, user, report) {
   ].join('');
 
   MailApp.sendEmail({
-    to: risCoreUnique_(to).join(','),
-    cc: risCoreUnique_(recipients.cc).join(','),
+    to: to.join(','),
+    cc: risCoreUnique_([RIS_EXCEL_CONFIG.notificationCc]).join(','),
     subject: RIS_EXCEL_CONFIG.notificationSubjectPrefix + (entry.risNo || entry.recordId),
     htmlBody: html,
     body: 'RIS Excel generated: ' + (entry.risNo || entry.recordId) + '\n' + file.getUrl()
   });
+}
+
+function risExcelGeneratedByEmail_(ss, user) {
+  const adminEmail = risExcelFindAdminEmail_(ss, user);
+  if (adminEmail) return adminEmail;
+
+  const username = String(user.username || '').trim();
+  if (risExcelLooksLikeEmail_(username)) return username;
+
+  const activeEmail = Session.getActiveUser().getEmail();
+  return activeEmail || '';
+}
+
+function risExcelFindAdminEmail_(ss, user) {
+  const sheet = ss.getSheetByName(RIS_CONFIG.adminEmailsSheetName) || ss.getSheetByName(RIS_CONFIG.usersSheetName);
+  if (!sheet || sheet.getLastRow() < 2) return '';
+
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0];
+  const usernameCol = risFindHeaderColumn_(headers, ['Username', 'User Name']);
+  const nameCol = risFindHeaderColumn_(headers, ['Name', 'Full Name']);
+  const recipientCol = risFindHeaderColumn_(headers, ['Recipients', 'Receipients', 'Recipient', 'Email', 'Email Address', 'TO']);
+  const senderCol = risFindHeaderColumn_(headers, ['Sender', 'From']);
+  const wanted = [user.username, user.fullName].map(risCoreNormalizeText_).filter(String);
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    const rowUsername = usernameCol ? row[usernameCol - 1] : '';
+    const rowName = nameCol ? row[nameCol - 1] : '';
+    const rowRecipient = recipientCol ? row[recipientCol - 1] : '';
+    const rowSender = senderCol ? row[senderCol - 1] : '';
+    const rowKeys = [rowUsername, rowName, rowRecipient, rowSender].map(risCoreNormalizeText_);
+    const matches = rowKeys.some(function(value) {
+      return wanted.indexOf(value) !== -1;
+    });
+
+    if (matches) {
+      return risExcelFirstEmail_(rowRecipient) || risExcelFirstEmail_(rowSender) ||
+        (risExcelLooksLikeEmail_(rowUsername) ? String(rowUsername).trim() : '');
+    }
+  }
+
+  return '';
+}
+
+function risExcelFirstEmail_(value) {
+  const emails = risCoreSplitEmailList_(value).filter(risExcelLooksLikeEmail_);
+  return emails[0] || '';
+}
+
+function risExcelLooksLikeEmail_(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 }
 
 function risExcelResultMessage_(result) {
