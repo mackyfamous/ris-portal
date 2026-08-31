@@ -13,6 +13,7 @@ const RIS_EXCEL_CONFIG = {
   sheetName: '',
   stockAvailableMark: 'ü',
   stockUnavailableMark: 'ü',
+  nothingFollowsText: '***************** Nothing Follows ****************',
   xlsxMimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   headerCells: {
     office: 'C6',
@@ -335,6 +336,7 @@ function risExcelFillTemplate_(sheet, entry, items, user) {
   sheet.getRange(cells.division).setValue(RIS_EXCEL_CONFIG.divisionName);
   sheet.getRange(cells.risNo).setValue(RIS_EXCEL_CONFIG.risNoLabelPrefix + (entry.risNo || entry.recordId || ''));
   sheet.getRange(cells.date).setValue(entry.deliveryDate || new Date());
+  sheet.getRange(cells.date).setNumberFormat('yyyy-mm-dd');
   sheet.getRange(cells.purpose).setValue(entry.purpose || '');
   sheet.getRange(cells.requestedBy).setValue(entry.requestedBy || '');
   sheet.getRange(cells.approvedBy).setValue(entry.approvedBy || '');
@@ -366,7 +368,39 @@ function risExcelFillTemplate_(sheet, entry, items, user) {
     sheet.getRange(row, RIS_EXCEL_CONFIG.itemColumns.totalCost).setFormula('=K' + row + '*L' + row);
   });
 
+  risExcelPlaceNothingFollows_(sheet, start + items.length, end);
   sheet.getRange('M41').setFormula('=SUM(M' + start + ':M' + end + ')');
+}
+
+function risExcelPlaceNothingFollows_(sheet, markerRow, endRow) {
+  if (markerRow > endRow) return;
+
+  let movedDrawing = false;
+  if (typeof sheet.getDrawings === 'function') {
+    sheet.getDrawings().forEach(function(drawing) {
+      const info = typeof drawing.getContainerInfo === 'function' ? drawing.getContainerInfo() : null;
+      const anchorRow = info && typeof info.getAnchorRow === 'function' ? info.getAnchorRow() : 0;
+      const anchorColumn = info && typeof info.getAnchorColumn === 'function' ? info.getAnchorColumn() : 0;
+      const isItemAreaDrawing = (!anchorRow || anchorRow >= RIS_EXCEL_CONFIG.itemStartRow && anchorRow <= RIS_EXCEL_CONFIG.itemEndRow) &&
+        (!anchorColumn || anchorColumn >= 2 && anchorColumn <= 14);
+      if (!isItemAreaDrawing) return;
+
+      try {
+        drawing.setPosition(markerRow, RIS_EXCEL_CONFIG.itemColumns.itemDescription, 0, 0);
+        movedDrawing = true;
+      } catch (error) {
+        // Fall back to a cell marker if Google Sheets cannot move the template textbox.
+      }
+    });
+  }
+
+  if (movedDrawing) return;
+
+  sheet.getRange(markerRow, 2, 1, 13).clearContent();
+  sheet.getRange(markerRow, RIS_EXCEL_CONFIG.itemColumns.itemDescription)
+    .setValue(RIS_EXCEL_CONFIG.nothingFollowsText)
+    .setFontWeight('bold')
+    .setHorizontalAlignment('center');
 }
 
 function risExcelExportToXlsx_(spreadsheet, risNo) {
