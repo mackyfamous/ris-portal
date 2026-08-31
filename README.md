@@ -29,9 +29,12 @@ Update these placeholder IDs before using the system:
 In `Code.gs`:
 
 ```js
+autoCreateSheets: false,
 transactionsSheetId: 'PASTE_TRANSACTIONS_SHEET_ID',
 inventorySheetId: 'PASTE_INVENTORY_SHEET_ID',
 ```
+
+Keep `autoCreateSheets: false` for normal use. With this setting, the web app will require existing tabs instead of creating new sheets during page load or filtering. Run `RIS Portal > Setup required sheets` only when you intentionally want to create or repair the required tabs.
 
 If the Apps Script project is bound to `New_RIS_Portal`, `transactionsSheetId` can stay as the placeholder while testing. The inventory workbook ID is still recommended because the portal reads Medicine and Supplies from the CHD inventory workbook.
 
@@ -245,9 +248,10 @@ For Excel/PDF generation, enter a username that exists in the `Username` column 
 3. Add every `.gs` file, the `Index.html` file, and the `appsscript.json` manifest from this repository.
 4. Update configuration IDs.
 5. Enable the Advanced Drive service.
-6. Run `setupRISPortalSheets`.
-7. Run each authorization menu item once.
-8. Deploy as a web app:
+6. Run `RIS Portal > Setup required sheets` once only when required tabs need to be created or repaired.
+7. Keep `autoCreateSheets: false` for normal portal use.
+8. Run each authorization menu item once.
+9. Deploy as a web app:
    - Execute as: Me
    - Who has access: choose based on your office workflow
 
