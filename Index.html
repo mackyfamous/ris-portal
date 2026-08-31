@@ -149,6 +149,26 @@
     .message.success { display: block; background: var(--green-bg); color: #166534; }
     .message.error { display: block; background: var(--red-bg); color: #991b1b; }
 
+    .inventory-context {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: .92rem;
+      font-weight: 700;
+    }
+
+    .inventory-summary {
+      color: var(--muted);
+      font-size: .92rem;
+      font-weight: 700;
+    }
+
+    .loading-cell {
+      padding: 28px !important;
+      text-align: center;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
     .status-strip {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -289,7 +309,10 @@
 
     <section id="inventoryPanel" class="panel" style="display:none;">
       <div class="panel-header">
-        <h2 class="panel-title">3. Add items</h2>
+        <div>
+          <h2 class="panel-title">3. Add items</h2>
+          <div id="inventoryContext" class="inventory-context">No program loaded yet.</div>
+        </div>
         <span id="sourceLabel" class="badge text-bg-light"></span>
       </div>
       <div class="panel-body">
@@ -309,6 +332,7 @@
             </select>
           </div>
         </div>
+        <div id="filterSummary" class="inventory-summary mb-2"></div>
         <div class="inventory-wrap">
           <table class="table table-sm table-hover align-middle inventory">
             <thead><tr><th>Stock</th><th>Code</th><th>Item</th><th>UOM</th><th>PO/PTR</th><th>Batch/Lot</th><th>Expiry</th><th>SOH</th><th>Cost</th><th></th></tr></thead>
@@ -348,6 +372,8 @@
   <script>
     var setupData = null;
     var selectedSourceKey = '';
+    var currentSourceLabel = '';
+    var currentProgramLabel = '';
     var currentInventory = [];
     var selectedItems = [];
     var holidays = [];
@@ -390,11 +416,13 @@
       selectedSourceKey = sourceKey;
       currentInventory = [];
       selectedItems = [];
+      currentProgramLabel = '';
       renderSourceButtons();
       renderCart();
       document.getElementById('inventoryPanel').style.display = 'none';
 
       var source = getSelectedSource();
+      currentSourceLabel = source ? source.buttonName : '';
       var programs = (setupData.programsBySource && setupData.programsBySource[sourceKey]) || [];
       var select = document.getElementById('programSelect');
       select.disabled = false;
@@ -403,7 +431,9 @@
       }).join('');
 
       document.getElementById('loadInventoryBtn').disabled = false;
-      document.getElementById('sourceLabel').textContent = source ? source.buttonName : '';
+      document.getElementById('sourceLabel').textContent = currentSourceLabel;
+      setInventoryContext(currentSourceLabel ? currentSourceLabel + ': choose a program.' : 'No program loaded yet.');
+      setFilterSummary('');
       var warning = setupData.sourceWarnings && setupData.sourceWarnings[sourceKey];
       setMessage(warning ? 'Source warning: ' + warning : '', warning ? 'error' : '');
     }
@@ -413,6 +443,15 @@
       if (!selectedSourceKey) return setMessage('Choose Medicine or Supplies first.', 'error');
       if (!program) return setMessage('Choose a program first.', 'error');
 
+      var source = getSelectedSource();
+      currentSourceLabel = source ? source.buttonName : '';
+      currentProgramLabel = program;
+      document.getElementById('inventoryPanel').style.display = 'block';
+      document.getElementById('sourceLabel').textContent = currentSourceLabel;
+      setInventoryContext(currentSourceLabel + ' - Program: ' + program + ' - loading items...');
+      setFilterSummary('Loading inventory...');
+      document.getElementById('inventoryBody').innerHTML = '<tr><td colspan="10" class="loading-cell">Loading items for ' + escapeHtml(program) + '...</td></tr>';
+
       setBusy(true);
       setMessage('Loading items...', 'info');
       google.script.run
@@ -420,13 +459,23 @@
           setBusy(false);
           if (!response || !response.success) return setMessage('Could not load items: ' + getErrorMessage(response), 'error');
           currentInventory = response.data || [];
+          currentProgramLabel = response.selectedProgram || program;
+          currentSourceLabel = response.source && response.source.buttonName ? response.source.buttonName : currentSourceLabel;
           updateStatusCounts(response.statusCounts || {});
           document.getElementById('inventoryPanel').style.display = 'block';
+          document.getElementById('sourceLabel').textContent = currentSourceLabel;
+          setInventoryContext(buildInventoryContext(response.source, currentProgramLabel));
           renderInventory();
-          setMessage('', '');
+          if (response.warnings && response.warnings.length) {
+            setMessage('Loaded available items, but some source sheets had issues: ' + response.warnings.join(' | '), 'error');
+          } else {
+            setMessage('', '');
+          }
         })
         .withFailureHandler(function(error) {
           setBusy(false);
+          setInventoryContext(currentSourceLabel + ' - Program: ' + program);
+          setFilterSummary('');
           setMessage('Could not load items: ' + getErrorMessage(error), 'error');
         })
         .getInventoryData(selectedSourceKey, program);
@@ -446,9 +495,10 @@
       if (status) rows = rows.filter(function(item) { return item.status === status; });
       if (search) {
         rows = rows.filter(function(item) {
-          return normalize([item.itemCode, item.itemDescription, item.poNumber, item.batch, item.supplier].join(' ')).indexOf(search) !== -1;
+          return normalize([item.itemCode, item.itemDescription, item.poNumber, item.batch, item.supplier, item.sourceSheet].join(' ')).indexOf(search) !== -1;
         });
       }
+      setFilterSummary('Showing ' + rows.length + ' of ' + currentInventory.length + ' items for ' + currentProgramLabel + '.');
       if (!rows.length) {
         body.innerHTML = '<tr><td colspan="10" class="text-center text-muted p-4">No matching items found.</td></tr>';
         return;
@@ -457,16 +507,21 @@
         var disabled = item.status === 'out' ? ' disabled' : '';
         var rowClass = item.status === 'out' ? 'row-out' : (item.status === 'low' ? 'row-low' : '');
         var buttonText = item.status === 'out' ? 'Cannot Add' : 'Add';
-        return '<tr class="' + rowClass + '"><td><span class="stock-badge ' + escapeAttr(item.status) + '">' + escapeHtml(item.statusLabel) + '</span></td><td>' + escapeHtml(item.itemCode) + '</td><td><strong>' + escapeHtml(item.itemDescription) + '</strong><div class="text-muted small">' + escapeHtml(item.supplier || '') + '</div></td><td>' + escapeHtml(item.uom) + '</td><td>' + escapeHtml(item.poNumber) + '</td><td>' + escapeHtml(item.batch) + '</td><td>' + escapeHtml(item.expiry) + '</td><td class="text-end fw-bold">' + number(item.stock, 0) + '</td><td class="text-end">' + money(item.unitCost) + '</td><td><button class="btn btn-sm btn-primary" onclick="addItem(' + Number(item.sourceRow) + ')"' + disabled + '>' + buttonText + '</button></td></tr>';
+        var inventoryIndex = currentInventory.indexOf(item);
+        return '<tr class="' + rowClass + '"><td><span class="stock-badge ' + escapeAttr(item.status) + '">' + escapeHtml(item.statusLabel) + '</span></td><td>' + escapeHtml(item.itemCode) + '</td><td><strong>' + escapeHtml(item.itemDescription) + '</strong><div class="text-muted small">' + escapeHtml(item.supplier || '') + '</div><div class="text-muted small">Source: ' + escapeHtml(item.sourceSheet || '') + '</div></td><td>' + escapeHtml(item.uom) + '</td><td>' + escapeHtml(item.poNumber) + '</td><td>' + escapeHtml(item.batch) + '</td><td>' + escapeHtml(item.expiry) + '</td><td class="text-end fw-bold">' + number(item.stock, 0) + '</td><td class="text-end">' + money(item.unitCost) + '</td><td><button class="btn btn-sm btn-primary" onclick="addItemByIndex(' + inventoryIndex + ')"' + disabled + '>' + buttonText + '</button></td></tr>';
       }).join('');
     }
 
-    function addItem(sourceRow) {
-      var item = currentInventory.find(function(row) { return Number(row.sourceRow) === Number(sourceRow); });
+    function addItemByIndex(index) {
+      var item = currentInventory[Number(index)];
       if (!item) return;
       if (item.status === 'out') return setMessage('This item is out of stock.', 'error');
 
-      var existing = selectedItems.find(function(row) { return Number(row.sourceRow) === Number(sourceRow) && row.sourceSheet === item.sourceSheet; });
+      var existing = selectedItems.find(function(row) {
+        return Number(row.sourceRow) === Number(item.sourceRow) &&
+          row.sourceSheet === item.sourceSheet &&
+          row.sourceSpreadsheetId === item.sourceSpreadsheetId;
+      });
       if (existing) {
         existing.qtyRequested = Math.min(Number(existing.qtyRequested || 0) + 1, Number(item.stock || 0));
         existing.issuedQty = existing.qtyRequested;
@@ -504,7 +559,7 @@
       }
       target.innerHTML = selectedItems.map(function(item, index) {
         var total = Number(item.qtyRequested || 0) * Number(item.unitCost || 0);
-        return '<div class="cart-row"><div><div class="cart-title">' + escapeHtml(item.itemDescription) + '</div><div class="cart-meta">' + escapeHtml(item.itemCode) + ' | SOH: ' + number(item.currentSoh, 0) + ' | ' + escapeHtml(item.uom) + '</div></div><div><label class="form-label small fw-bold">Qty</label><input class="form-control" type="number" min="1" max="' + Number(item.currentSoh || 0) + '" value="' + Number(item.qtyRequested || 1) + '" onchange="updateQty(' + index + ', this.value)"></div><div><label class="form-label small fw-bold">Unit Cost</label><div class="form-control bg-light">' + money(item.unitCost) + '</div></div><div><label class="form-label small fw-bold">Total</label><div class="form-control bg-light">' + money(total) + '</div></div><button class="btn btn-outline-danger" title="Remove item" onclick="removeItem(' + index + ')">X</button></div>';
+        return '<div class="cart-row"><div><div class="cart-title">' + escapeHtml(item.itemDescription) + '</div><div class="cart-meta">' + escapeHtml(item.itemCode) + ' | SOH: ' + number(item.currentSoh, 0) + ' | ' + escapeHtml(item.uom) + ' | ' + escapeHtml(item.sourceSheet || '') + '</div></div><div><label class="form-label small fw-bold">Qty</label><input class="form-control" type="number" min="1" max="' + Number(item.currentSoh || 0) + '" value="' + Number(item.qtyRequested || 1) + '" onchange="updateQty(' + index + ', this.value)"></div><div><label class="form-label small fw-bold">Unit Cost</label><div class="form-control bg-light">' + money(item.unitCost) + '</div></div><div><label class="form-label small fw-bold">Total</label><div class="form-control bg-light">' + money(total) + '</div></div><button class="btn btn-outline-danger" title="Remove item" onclick="removeItem(' + index + ')">X</button></div>';
       }).join('');
       document.getElementById('grandTotal').textContent = money(getGrandTotal());
     }
@@ -575,6 +630,8 @@
 
     function resetPortalFormAfterSubmit() {
       selectedSourceKey = '';
+      currentSourceLabel = '';
+      currentProgramLabel = '';
       currentInventory = [];
       selectedItems = [];
 
@@ -584,6 +641,8 @@
 
       document.getElementById('inventoryPanel').style.display = 'none';
       document.getElementById('sourceLabel').textContent = '';
+      setInventoryContext('No program loaded yet.');
+      setFilterSummary('');
       document.getElementById('inventoryBody').innerHTML = '<tr><td colspan="10" class="text-center text-muted p-4">Choose a program, then show items.</td></tr>';
 
       var programSelect = document.getElementById('programSelect');
@@ -659,6 +718,22 @@
 
     function getSelectedSource() {
       return (setupData.sources || []).find(function(source) { return source.sourceKey === selectedSourceKey; });
+    }
+
+    function buildInventoryContext(source, program) {
+      var sourceName = source && source.buttonName ? source.buttonName : currentSourceLabel;
+      var count = source && source.sourceCount ? Number(source.sourceCount) : 1;
+      var text = sourceName + ' - Program: ' + program;
+      if (count > 1) text += ' - ' + count + ' inventory sheets';
+      return text;
+    }
+
+    function setInventoryContext(text) {
+      document.getElementById('inventoryContext').textContent = text || 'No program loaded yet.';
+    }
+
+    function setFilterSummary(text) {
+      document.getElementById('filterSummary').textContent = text || '';
     }
 
     function getGrandTotal() {
