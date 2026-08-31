@@ -126,7 +126,8 @@ function getInventoryData(sourceKey, selectedProgram) {
       source: risPublicSource_(source),
       selectedProgram: selectedProgram || '',
       data: inventory.rows,
-      statusCounts: inventory.statusCounts
+      statusCounts: inventory.statusCounts,
+      warnings: inventory.warnings || []
     };
   } catch (error) {
     return { success: false, error: risCoreErrorMessage_(error) };
@@ -210,17 +211,22 @@ function submitTransaction(payload) {
 function risValidateAndPrepareItems_(payload, source) {
   if (!payload || !payload.items || payload.items.length === 0) throw new Error('Add at least one item.');
 
-  const sourceSpreadsheet = risCoreOpenSourceSpreadsheet_(source);
-  const sourceSpreadsheetId = sourceSpreadsheet.getId();
-  const sheet = sourceSpreadsheet.getSheetByName(source.sourceSheetName);
-  if (!sheet) throw new Error('Source sheet not found: ' + source.sourceSheetName);
-  const layout = risGetInventoryLayout_(sheet, source);
-
+  const cache = {};
   return payload.items.map(function(item, index) {
+    const sourceMember = risFindSourceMemberForItem_(source, item);
+    const context = risGetValidationSourceContext_(sourceMember, cache);
     const sourceRow = risCoreParseInteger_(item.sourceRow);
-    if (!sourceRow || sourceRow <= layout.headerRow) throw new Error('Item ' + (index + 1) + ' is missing its inventory row.');
 
-    const current = risMapInventoryRow_(sheet.getRange(sourceRow, 1, 1, sheet.getLastColumn()).getValues()[0], layout, source, sourceRow);
+    if (!sourceRow || sourceRow <= context.layout.headerRow) {
+      throw new Error('Item ' + (index + 1) + ' is missing its inventory row.');
+    }
+
+    const current = risMapInventoryRow_(
+      context.sheet.getRange(sourceRow, 1, 1, context.sheet.getLastColumn()).getValues()[0],
+      context.layout,
+      sourceMember,
+      sourceRow
+    );
     const qtyRequested = risCoreParseNumber_(item.qtyRequested);
     const issuedQty = risCoreParseNumber_(item.issuedQty || qtyRequested);
     const currentStock = risCoreParseNumber_(current.stock);
@@ -231,7 +237,7 @@ function risValidateAndPrepareItems_(payload, source) {
     if (qtyRequested > currentStock) throw new Error('Requested quantity for "' + current.itemDescription + '" is greater than available stock.');
 
     if (!RIS_CONFIG.testingMode) {
-      sheet.getRange(sourceRow, layout.columns.stock).setValue(currentStock - qtyRequested);
+      context.sheet.getRange(sourceRow, context.layout.columns.stock).setValue(currentStock - qtyRequested);
     }
 
     return {
@@ -248,12 +254,29 @@ function risValidateAndPrepareItems_(payload, source) {
       unitCost: unitCost,
       totalCost: issuedQty * unitCost,
       remarks: item.remarks || current.remarks || '',
-      sourceSpreadsheetId: sourceSpreadsheetId,
-      sourceSheet: source.sourceSheetName,
+      sourceSpreadsheetId: context.sourceSpreadsheetId,
+      sourceSheet: sourceMember.sourceSheetName,
       sourceRow: sourceRow,
-      sourceHeaderRow: layout.headerRow
+      sourceHeaderRow: context.layout.headerRow
     };
   });
+}
+
+function risGetValidationSourceContext_(source, cache) {
+  const key = [risNormalizeSpreadsheetId_(source.sourceSpreadsheetId), source.sourceSheetName, source.headerRow].join('::');
+  if (!cache[key]) {
+    const spreadsheet = risCoreOpenSourceSpreadsheet_(source);
+    const sheet = spreadsheet.getSheetByName(source.sourceSheetName);
+    if (!sheet) throw new Error('Source sheet not found: ' + source.sourceSheetName);
+
+    cache[key] = {
+      spreadsheet: spreadsheet,
+      sourceSpreadsheetId: spreadsheet.getId(),
+      sheet: sheet,
+      layout: risGetInventoryLayout_(sheet, source)
+    };
+  }
+  return cache[key];
 }
 
 function risSendSubmissionEmails_(ss, entry, items) {
