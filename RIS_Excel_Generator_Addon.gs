@@ -19,6 +19,7 @@ const RIS_EXCEL_CONFIG = {
   dateNumberFormat: 'mm-dd-yy',
   quantityNumberFormat: 'General',
   moneyNumberFormat: '_-[$₱-3409]* #,##0.00_-;\\-[$₱-3409]* #,##0.00_-;_-[$₱-3409]* "-"??_-;_-@',
+  defaultSheetView: 'pageBreakPreview',
   nothingFollowsText: '***************** Nothing Follows ****************',
   xlsxMimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   headerCells: {
@@ -448,9 +449,57 @@ function risExcelExportToXlsx_(spreadsheet, risNo) {
     throw new Error('Excel export failed with HTTP ' + status + ': ' + response.getContentText().slice(0, 500));
   }
 
-  const blob = response.getBlob();
-  blob.setName(fileName);
+  const blob = risExcelBuildXlsxBlob_(response.getBlob(), fileName);
   return folder.createFile(blob);
+}
+
+function risExcelBuildXlsxBlob_(blob, fileName) {
+  blob.setName(fileName);
+  blob.setContentType(RIS_EXCEL_CONFIG.xlsxMimeType);
+
+  if (RIS_EXCEL_CONFIG.defaultSheetView !== 'pageBreakPreview') return blob;
+
+  try {
+    const updatedParts = Utilities.unzip(blob).map(function(part) {
+      const name = part.getName();
+      if (!/^xl\/worksheets\/sheet\d+\.xml$/.test(name)) return part;
+
+      const xml = part.getDataAsString('UTF-8');
+      const updatedXml = risExcelSetPageBreakPreviewXml_(xml);
+      if (updatedXml === xml) return part;
+      return Utilities.newBlob(updatedXml, 'text/xml', name);
+    });
+
+    const updatedBlob = Utilities.zip(updatedParts, fileName);
+    updatedBlob.setContentType(RIS_EXCEL_CONFIG.xlsxMimeType);
+    return updatedBlob;
+  } catch (error) {
+    return blob;
+  }
+}
+
+function risExcelSetPageBreakPreviewXml_(xml) {
+  const sheetViewTag = xml.match(/<sheetView\b[^>]*\/?>/);
+  if (sheetViewTag) {
+    return xml.replace(sheetViewTag[0], risExcelSetXmlAttribute_(sheetViewTag[0], 'view', 'pageBreakPreview'));
+  }
+
+  const sheetViewsTag = xml.match(/<sheetViews\b[^>]*>/);
+  if (sheetViewsTag) {
+    return xml.replace(sheetViewsTag[0], sheetViewsTag[0] + '<sheetView workbookViewId="0" view="pageBreakPreview"/>');
+  }
+
+  return xml.replace(/<worksheet\b([^>]*)>/, '<worksheet$1><sheetViews><sheetView workbookViewId="0" view="pageBreakPreview"/></sheetViews>');
+}
+
+function risExcelSetXmlAttribute_(tag, name, value) {
+  const attributePattern = new RegExp('\\s' + name + '="[^"]*"');
+  if (attributePattern.test(tag)) {
+    return tag.replace(attributePattern, ' ' + name + '="' + value + '"');
+  }
+  return tag.replace(/\/?>$/, function(end) {
+    return ' ' + name + '="' + value + '"' + end;
+  });
 }
 
 function risExcelSendNotification_(ss, entry, items, file, user, report) {
