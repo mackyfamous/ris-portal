@@ -551,10 +551,8 @@
         .withSuccessHandler(function(response) {
           setBusy(false);
           if (!response || !response.success) return setMessage('RIS was not saved: ' + getErrorMessage(response), 'error');
-          selectedItems = [];
-          renderCart();
-          setMessage('Success. RIS saved: ' + response.risNo + (response.testingMode ? ' Testing mode: stock was not deducted.' : ''), 'success');
-          refreshRisNo();
+          alert('RIS request saved successfully.\n\nRIS Number: ' + response.risNo + (response.testingMode ? '\n\nTesting mode: stock was not deducted.' : ''));
+          window.location.reload();
         })
         .withFailureHandler(function(error) {
           setBusy(false);
