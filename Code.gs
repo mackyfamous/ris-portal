@@ -11,6 +11,7 @@ const RIS_CONFIG = {
   sourcesSheetName: 'RIS Sources',
   entriesSheetName: 'RIS Entries',
   itemsSheetName: 'RIS Items',
+  holidaysSheetName: 'Holidays',
   adminEmailsSheetName: 'Admin Emails',
   clientEmailsSheetName: 'Client Emails',
   legacyEmailsSheetNames: ['Emails', 'emails', 'EMAILS'],
