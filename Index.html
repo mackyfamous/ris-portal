@@ -440,8 +440,8 @@
 
     function loadInventory() {
       var program = document.getElementById('programSelect').value;
-      if (!selectedSourceKey) return setMessage('Choose Medicine or Supplies first.', 'error');
-      if (!program) return setMessage('Choose a program first.', 'error');
+      if (!selectedSourceKey) return showErrorMessage('Choose Medicine or Supplies first.');
+      if (!program) return showErrorMessage('Choose a program first.');
 
       var source = getSelectedSource();
       currentSourceLabel = source ? source.buttonName : '';
@@ -457,7 +457,7 @@
       google.script.run
         .withSuccessHandler(function(response) {
           setBusy(false);
-          if (!response || !response.success) return setMessage('Could not load items: ' + getErrorMessage(response), 'error');
+          if (!response || !response.success) return showErrorMessage('Could not load items: ' + getErrorMessage(response));
           currentInventory = response.data || [];
           currentProgramLabel = response.selectedProgram || program;
           currentSourceLabel = response.source && response.source.buttonName ? response.source.buttonName : currentSourceLabel;
@@ -476,7 +476,7 @@
           setBusy(false);
           setInventoryContext(currentSourceLabel + ' - Program: ' + program);
           setFilterSummary('');
-          setMessage('Could not load items: ' + getErrorMessage(error), 'error');
+          showErrorMessage('Could not load items: ' + getErrorMessage(error));
         })
         .getInventoryData(selectedSourceKey, program);
     }
@@ -515,7 +515,7 @@
     function addItemByIndex(index) {
       var item = currentInventory[Number(index)];
       if (!item) return;
-      if (item.status === 'out') return setMessage('This item is out of stock.', 'error');
+      if (item.status === 'out') return showErrorMessage('This item is out of stock.');
 
       var existing = selectedItems.find(function(row) {
         return Number(row.sourceRow) === Number(item.sourceRow) &&
@@ -598,21 +598,21 @@
         items: selectedItems
       };
       var validation = validatePayload(payload);
-      if (validation) return setMessage(validation, 'error');
+      if (validation) return showErrorMessage(validation);
 
       setBusy(true);
       setMessage('Saving RIS request...', 'info');
       google.script.run
         .withSuccessHandler(function(response) {
           setBusy(false);
-          if (!response || !response.success) return setMessage('RIS was not saved: ' + getErrorMessage(response), 'error');
+          if (!response || !response.success) return showErrorMessage('RIS was not saved: ' + getErrorMessage(response));
           showSubmitSuccess(response);
           resetPortalFormAfterSubmit();
           refreshRisNo();
         })
         .withFailureHandler(function(error) {
           setBusy(false);
-          setMessage('RIS was not saved: ' + getErrorMessage(error), 'error');
+          showErrorMessage('RIS was not saved: ' + getErrorMessage(error));
         })
         .submitTransaction(payload);
     }
@@ -750,6 +750,15 @@
       var target = document.getElementById('message');
       target.className = type ? 'message ' + type : 'message';
       target.textContent = text || '';
+    }
+
+    function showErrorMessage(text) {
+      setMessage(text, 'error');
+      try {
+        window.alert('Please check the RIS form:\n\n' + text);
+      } catch (error) {
+        // The error banner remains visible if the browser blocks alert dialogs.
+      }
     }
 
     function getErrorMessage(error) {
