@@ -4,6 +4,7 @@
 
 const RIS_CONFIG = {
   testingMode: true,
+  autoCreateSheets: false,
   transactionsSheetId: 'PASTE_TRANSACTIONS_SHEET_ID',
   inventorySheetId: 'PASTE_INVENTORY_SHEET_ID',
   portalDisplayName: 'Requisition Issuance Slip Portal',
@@ -46,15 +47,16 @@ function onOpen() {
 
 function setupRISPortalSheets() {
   const ss = risCoreGetTransactionsSpreadsheet_();
-  risCoreEnsureTransactionSheets_(ss);
-  risEnsureSourcesSheet_(ss);
+  risCoreEnsureTransactionSheets_(ss, true);
+  risEnsureSourcesSheet_(ss, true);
   SpreadsheetApp.getUi().alert('RIS Portal sheets are ready.');
 }
 
 function showNextRisNo() {
   const ss = risCoreGetTransactionsSpreadsheet_();
-  const sheet = risCoreGetOrCreateSheet_(ss, RIS_CONFIG.entriesSheetName);
-  SpreadsheetApp.getUi().alert('Next RIS No.: ' + risGenerateNextRisNo_(sheet, new Date()));
+  risCoreEnsureTransactionSheets_(ss, RIS_CONFIG.autoCreateSheets);
+  const sheet = risCoreGetRequiredSheet_(ss, RIS_CONFIG.entriesSheetName);
+  SpreadsheetApp.getUi().alert('Next RIS No.: ' + risGenerateNextRisNo_(sheet, new Date(), RIS_CONFIG.autoCreateSheets));
 }
 
 function authorizeEmailNotifications() {
@@ -73,9 +75,9 @@ function authorizeEmailNotifications() {
 function getInitialData() {
   try {
     const ss = risCoreGetTransactionsSpreadsheet_();
-    risCoreEnsureTransactionSheets_(ss);
+    risCoreEnsureTransactionSheets_(ss, RIS_CONFIG.autoCreateSheets);
 
-    const sources = risGetSources_(ss);
+    const sources = risGetSources_(ss, RIS_CONFIG.autoCreateSheets);
     const programsBySource = {};
     const sourceWarnings = {};
 
@@ -98,7 +100,7 @@ function getInitialData() {
       programsBySource: programsBySource,
       sourceWarnings: sourceWarnings,
       holidays: risGetHolidayDates_(ss),
-      nextRisNo: risGenerateNextRisNo_(ss.getSheetByName(RIS_CONFIG.entriesSheetName), new Date())
+      nextRisNo: risGenerateNextRisNo_(risCoreGetRequiredSheet_(ss, RIS_CONFIG.entriesSheetName), new Date(), RIS_CONFIG.autoCreateSheets)
     };
   } catch (error) {
     return { success: false, error: risCoreErrorMessage_(error) };
@@ -108,8 +110,9 @@ function getInitialData() {
 function getNextRisNo() {
   try {
     const ss = risCoreGetTransactionsSpreadsheet_();
-    const sheet = risCoreGetOrCreateSheet_(ss, RIS_CONFIG.entriesSheetName);
-    return { success: true, risNo: risGenerateNextRisNo_(sheet, new Date()) };
+    risCoreEnsureTransactionSheets_(ss, RIS_CONFIG.autoCreateSheets);
+    const sheet = risCoreGetRequiredSheet_(ss, RIS_CONFIG.entriesSheetName);
+    return { success: true, risNo: risGenerateNextRisNo_(sheet, new Date(), RIS_CONFIG.autoCreateSheets) };
   } catch (error) {
     return { success: false, error: risCoreErrorMessage_(error) };
   }
@@ -117,7 +120,9 @@ function getNextRisNo() {
 
 function getInventoryData(sourceKey, selectedProgram) {
   try {
-    const source = risFindSourceByKey_(risGetSources_(risCoreGetTransactionsSpreadsheet_()), sourceKey);
+    const ss = risCoreGetTransactionsSpreadsheet_();
+    risCoreEnsureTransactionSheets_(ss, RIS_CONFIG.autoCreateSheets);
+    const source = risFindSourceByKey_(risGetSources_(ss, RIS_CONFIG.autoCreateSheets), sourceKey);
     if (!source) throw new Error('Please select Medicine or Supplies first.');
 
     const inventory = risReadInventoryRows_(source, selectedProgram || '');
@@ -142,13 +147,13 @@ function submitTransaction(payload) {
 
   try {
     const ss = risCoreGetTransactionsSpreadsheet_();
-    risCoreEnsureTransactionSheets_(ss);
+    risCoreEnsureTransactionSheets_(ss, RIS_CONFIG.autoCreateSheets);
 
-    const source = risFindSourceByKey_(risGetSources_(ss), payload && payload.sourceKey);
+    const source = risFindSourceByKey_(risGetSources_(ss, RIS_CONFIG.autoCreateSheets), payload && payload.sourceKey);
     if (!source) throw new Error('Choose Medicine or Supplies.');
 
-    const entriesSheet = ss.getSheetByName(RIS_CONFIG.entriesSheetName);
-    const itemsSheet = ss.getSheetByName(RIS_CONFIG.itemsSheetName);
+    const entriesSheet = risCoreGetRequiredSheet_(ss, RIS_CONFIG.entriesSheetName);
+    const itemsSheet = risCoreGetRequiredSheet_(ss, RIS_CONFIG.itemsSheetName);
     const now = new Date();
     const risNo = risGenerateNextRisNo_(entriesSheet, now);
     const items = risValidateAndPrepareItems_(payload, source);
@@ -224,7 +229,7 @@ function risValidateAndPrepareItems_(payload, source) {
     const current = risMapInventoryRow_(
       context.sheet.getRange(sourceRow, 1, 1, context.sheet.getLastColumn()).getValues()[0],
       context.layout,
-      sourceMember,
+      context.source,
       sourceRow
     );
     const qtyRequested = risCoreParseNumber_(item.qtyRequested);
@@ -255,7 +260,7 @@ function risValidateAndPrepareItems_(payload, source) {
       totalCost: issuedQty * unitCost,
       remarks: item.remarks || current.remarks || '',
       sourceSpreadsheetId: context.sourceSpreadsheetId,
-      sourceSheet: sourceMember.sourceSheetName,
+      sourceSheet: context.sourceSheetName,
       sourceRow: sourceRow,
       sourceHeaderRow: context.layout.headerRow
     };
@@ -266,14 +271,16 @@ function risGetValidationSourceContext_(source, cache) {
   const key = [risNormalizeSpreadsheetId_(source.sourceSpreadsheetId), source.sourceSheetName, source.headerRow].join('::');
   if (!cache[key]) {
     const spreadsheet = risCoreOpenSourceSpreadsheet_(source);
-    const sheet = spreadsheet.getSheetByName(source.sourceSheetName);
-    if (!sheet) throw new Error('Source sheet not found: ' + source.sourceSheetName);
+    const sheet = risResolveSourceSheet_(spreadsheet, source);
+    const resolvedSource = Object.assign({}, source, { sourceSheetName: sheet.getName() });
 
     cache[key] = {
       spreadsheet: spreadsheet,
       sourceSpreadsheetId: spreadsheet.getId(),
+      sourceSheetName: sheet.getName(),
+      source: resolvedSource,
       sheet: sheet,
-      layout: risGetInventoryLayout_(sheet, source)
+      layout: risGetInventoryLayout_(sheet, resolvedSource)
     };
   }
   return cache[key];
