@@ -2,10 +2,12 @@
 
 Google Apps Script source for the Requisition Issuance Slip Portal.
 
-This version reads inventory directly from two source tabs instead of using the old consolidated inventory sheet:
+This version reads inventory directly from configured source tabs instead of using the old consolidated inventory sheet. Multiple source tabs can now appear under one portal button/category.
 
-- Medicine: `DRUGS and MEDICINES`
-- Supplies: `2026 SUPPLIES`
+Example:
+
+- Medicine button: `DRUGS and MEDICINES`
+- Supplies button: `2026 SUPPLIES`, `2025 SUPPLIES`, `2024 SUPPLIES`, or any future supplies tabs you enable
 
 The old `RIS Consolidated Inventory` tab and its menu can be left in the workbook while testing this version, but this portal does not read from it.
 
@@ -13,7 +15,7 @@ The old `RIS Consolidated Inventory` tab and its menu can be left in the workboo
 
 - `Code.gs` - web app entrypoints, setup menu, RIS submission flow, and email notification trigger.
 - `RIS_Core.gs` - shared sheet helpers, header mapping, admin validation, RIS lookup, write-back utilities, and formatting helpers.
-- `RIS_Inventory.gs` - Medicine/Supplies source routing, inventory reads, program loading, stock status, and RIS number generation.
+- `RIS_Inventory.gs` - grouped source routing, inventory reads, program loading, stock status, and RIS number generation.
 - `Index.html` - web app frontend with Medicine/Supplies buttons and stock-status UI.
 - `RIS_Excel_Generator_Addon.gs` - generates an Excel RIS file from the configured RIS Excel template.
 - `RIS_PDF_Generator_Addon.gs` - generates a legal-size RIS PDF.
@@ -31,6 +33,8 @@ transactionsSheetId: 'PASTE_TRANSACTIONS_SHEET_ID',
 inventorySheetId: 'PASTE_INVENTORY_SHEET_ID',
 ```
 
+If the Apps Script project is bound to `New_RIS_Portal`, `transactionsSheetId` can stay as the placeholder while testing. The inventory workbook ID is still recommended because the portal reads Medicine and Supplies from the CHD inventory workbook.
+
 In `RIS_Excel_Generator_Addon.gs`:
 
 ```js
@@ -43,8 +47,6 @@ In `RIS_PDF_Generator_Addon.gs`:
 ```js
 outputFolderId: 'PASTE_PDF_OUTPUT_FOLDER_ID',
 ```
-
-If the Apps Script project is bound to `New_RIS_Portal`, `transactionsSheetId` can stay as the placeholder while testing. The inventory workbook ID is still recommended because the portal reads Medicine and Supplies from the CHD inventory workbook.
 
 ## Required Google Sheets
 
@@ -116,7 +118,13 @@ Recipients | Sender | CC | Subject
 
 ## RIS Sources
 
-The `RIS Sources` sheet controls the buttons shown in the portal.
+The `RIS Sources` sheet controls the buttons shown in the portal and which inventory tabs each button reads.
+
+Required headers:
+
+```text
+Enabled | Button Name | Source Spreadsheet ID | Source Sheet Name | Header Row | Display Order | Category
+```
 
 Default rows:
 
@@ -124,6 +132,16 @@ Default rows:
 | --- | --- | --- | --- | --- | --- | --- |
 | TRUE | Medicine | same | DRUGS and MEDICINES | auto | 1 | Medicine |
 | TRUE | Supplies | same | 2026 SUPPLIES | auto | 2 | Supplies |
+
+To add more inventory sheets under the same button, add more rows with the same `Button Name` and `Category`:
+
+| Enabled | Button Name | Source Spreadsheet ID | Source Sheet Name | Header Row | Display Order | Category |
+| --- | --- | --- | --- | --- | --- | --- |
+| TRUE | Supplies | same | 2026 SUPPLIES | auto | 2 | Supplies |
+| TRUE | Supplies | same | 2025 SUPPLIES | auto | 3 | Supplies |
+| TRUE | Supplies | same | 2024 SUPPLIES | auto | 4 | Supplies |
+
+The portal will show one `Supplies` button and combine enabled rows behind that button. Each selected item still saves its exact `Source Sheet`, `Source Row`, and `Source Spreadsheet ID`, so stock deduction and Excel/PDF recovery still target the correct row.
 
 Use `same` only when the inventory tabs are in the same spreadsheet as the Apps Script project or when `inventorySheetId` is configured in `Code.gs`.
 
@@ -234,7 +252,8 @@ For Excel/PDF generation, enter a username that exists in the `Username` column 
 ## Testing Checklist
 
 - Medicine button loads programs from `DRUGS and MEDICINES`.
-- Supplies button loads programs from `2026 SUPPLIES`.
+- Supplies button loads programs from every enabled supplies source row.
+- Adding `2025 SUPPLIES` under the `Supplies` button does not create a second Supplies button.
 - Out-of-stock rows are red and cannot be added.
 - Low-stock rows are amber.
 - Submitted RIS writes one row to `RIS Entries`.
@@ -242,7 +261,7 @@ For Excel/PDF generation, enter a username that exists in the `Username` column 
 - `RIS Number` links entries and items.
 - `Source Spreadsheet ID`, `Source Sheet`, and `Source Row` are saved for each item.
 - `testingMode: true` does not deduct stock.
-- `testingMode: false` deducts stock from the source inventory row.
+- `testingMode: false` deducts stock from the exact source sheet and row.
 - Excel generation fills item code, description, UOM, PO/supplier, batch, expiry, quantity, cost, and total.
 - PDF generation writes PDF URL back to `RIS Entries`.
 - Excel generation writes Excel URL back to `RIS Entries`.
