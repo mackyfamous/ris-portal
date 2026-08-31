@@ -4,9 +4,12 @@
 
 const RIS_PDF_CONFIG = {
   outputFolderId: 'PASTE_PDF_OUTPUT_FOLDER_ID',
+  pasigLogoFileId: '1LQ10a2zc3oxRRw6tUTWzDFuNdnOkSvLQ',
   notificationSubjectPrefix: '[RIS PDF] Generated: ',
   divisionName: 'CITY HEALTH DEPARTMENT',
-  paperCss: '@page { size: 8.5in 14in; margin: 0.45in; }'
+  minimumItemRows: 18,
+  stockMark: 'X',
+  paperCss: '@page { size: 8.5in 14in; margin: 0.35in; }'
 };
 
 function risPdfAddMenu_() {
@@ -23,7 +26,7 @@ function risPdfAuthorize() {
   const ss = risCoreGetTransactionsSpreadsheet_();
   const recipients = risCoreReadEmailRecipients_(ss);
   const target = recipients.to[0] || Session.getActiveUser().getEmail();
-  if (!target) throw new Error('Add an email address in the Emails sheet before authorizing.');
+  if (!target) throw new Error('Add an email address in Admin Emails or Client Emails before authorizing.');
 
   MailApp.sendEmail({
     to: target,
@@ -172,68 +175,167 @@ function risPdfPrepareItems_(items) {
 }
 
 function risPdfBuildHtml_(entry, items, user) {
-  const rows = items.map(function(item) {
-    return '<tr>' +
-      '<td>' + risCoreEscapeHtml_(item.itemCode) + '</td>' +
-      '<td>' + risCoreEscapeHtml_(item.itemDescription) + '</td>' +
-      '<td>' + risCoreEscapeHtml_(item.uom) + '</td>' +
-      '<td>' + risCoreEscapeHtml_(item.poWithSupplier) + '</td>' +
-      '<td>' + risCoreEscapeHtml_(item.batch) + '</td>' +
-      '<td>' + risCoreEscapeHtml_(risCoreFormatDate_(item.expiry)) + '</td>' +
-      '<td class="num">' + risCoreEscapeHtml_(item.qtyRequested) + '</td>' +
-      '<td>' + (item.stockAvailable ? 'YES' : '') + '</td>' +
-      '<td>' + (item.stockAvailable ? '' : 'NO') + '</td>' +
-      '<td class="num">' + risCoreEscapeHtml_(item.issuedQty) + '</td>' +
-      '<td class="num">' + risCoreEscapeHtml_(risCoreParseNumber_(item.unitCost).toFixed(2)) + '</td>' +
-      '<td class="num">' + risCoreEscapeHtml_(risCoreParseNumber_(item.totalCost).toFixed(2)) + '</td>' +
-      '<td>' + risCoreEscapeHtml_(item.remarks) + '</td>' +
-      '</tr>';
-  }).join('');
-
+  const logoDataUri = risPdfGetPasigLogoDataUri_();
+  const logoHtml = logoDataUri
+    ? '<img class="pasig-logo" src="' + logoDataUri + '" alt="Pasig City logo">'
+    : '<div class="pasig-logo-fallback">PASIG</div>';
+  const itemRows = risPdfBuildItemRows_(items);
   const grandTotal = items.reduce(function(sum, item) {
     return sum + risCoreParseNumber_(item.totalCost);
   }, 0);
 
   return '<!doctype html><html><head><meta charset="utf-8"><style>' +
     RIS_PDF_CONFIG.paperCss +
-    'body{font-family:Arial,sans-serif;font-size:10px;color:#111827;}' +
-    'h1,h2,p{margin:0;}' +
-    '.center{text-align:center;}' +
-    '.title{font-size:16px;font-weight:700;}' +
-    '.subtitle{font-size:12px;font-weight:700;margin-top:2px;}' +
-    '.meta{width:100%;border-collapse:collapse;margin-top:16px;margin-bottom:8px;}' +
-    '.meta td{padding:3px 4px;font-size:10px;}' +
-    '.label{font-weight:700;width:120px;}' +
-    'table.items{width:100%;border-collapse:collapse;table-layout:fixed;}' +
-    '.items th,.items td{border:1px solid #111827;padding:3px;vertical-align:top;word-wrap:break-word;}' +
-    '.items th{font-size:9px;background:#f3f4f6;}' +
-    '.num{text-align:right;}' +
-    '.total-row td{font-weight:700;}' +
-    '.purpose{border:1px solid #111827;border-top:0;padding:6px;min-height:28px;}' +
-    '.signatures{width:100%;border-collapse:collapse;margin-top:18px;}' +
-    '.signatures td{border:1px solid #111827;padding:7px;height:34px;vertical-align:bottom;}' +
-    '.small{font-size:9px;color:#374151;}' +
+    '*{box-sizing:border-box;}' +
+    'body{font-family:Arial,Helvetica,sans-serif;font-size:8px;color:#111;margin:0;}' +
+    'table{border-collapse:collapse;table-layout:fixed;width:100%;}' +
+    'td,th{border:1px solid #111;padding:2px 3px;vertical-align:middle;}' +
+    'p,h1,h2{margin:0;}' +
+    '.brand td{height:76px;}' +
+    '.logo-cell{width:31%;text-align:center;padding:0;}' +
+    '.pasig-logo{display:block;max-width:100%;max-height:74px;margin:0 auto;}' +
+    '.pasig-logo-fallback{font-size:28px;font-weight:700;color:#164e9f;letter-spacing:1px;}' +
+    '.title-cell{text-align:center;color:#9f9f9f;font-weight:700;}' +
+    '.title-cell h1{font-size:18px;line-height:1.1;letter-spacing:.2px;}' +
+    '.title-cell h2{font-size:14px;line-height:1.2;margin-top:9px;}' +
+    '.meta{margin-top:-1px;}' +
+    '.meta th,.meta td{height:20px;}' +
+    '.meta th{text-align:left;font-weight:700;width:8%;}' +
+    '.meta td{text-align:center;}' +
+    '.meta .left-value{width:46%;}' +
+    '.meta .label-small{width:8%;}' +
+    '.meta .value-small{width:15%;}' +
+    '.accent{color:#a10f45;}' +
+    '.items{margin-top:-1px;}' +
+    '.items th,.items td{font-size:7px;line-height:1.05;text-align:center;word-break:break-word;overflow-wrap:break-word;}' +
+    '.items .group th{height:19px;font-weight:700;font-size:8px;}' +
+    '.items .head th{height:39px;font-weight:700;}' +
+    '.items tbody td{height:32px;}' +
+    '.items .desc{text-align:left;}' +
+    '.items .num{text-align:right;}' +
+    '.items .stock{font-size:8px;}' +
+    '.items .blank td{height:34px;}' +
+    '.items .grand td{height:20px;font-weight:700;}' +
+    '.items .grand-label{text-align:right;}' +
+    '.items .grand-value{text-align:right;}' +
+    '.purpose{margin-top:21px;}' +
+    '.purpose td{height:29px;font-weight:700;text-align:left;}' +
+    '.signatures{margin-top:-1px;}' +
+    '.signatures th,.signatures td{height:24px;font-size:8px;}' +
+    '.signatures th{text-align:center;font-weight:700;}' +
+    '.signatures .row-label{text-align:left;font-weight:700;width:20%;}' +
+    '.signatures .name{text-align:center;}' +
+    '.prepared td{height:24px;font-weight:700;text-align:left;}' +
+    '.prepared .value{height:27px;font-weight:400;text-align:center;}' +
     '</style></head><body>' +
-    '<div class="center"><h1 class="title">REQUISITION AND ISSUE SLIP</h1><h2 class="subtitle">CITY GOVERNMENT OF PASIG</h2></div>' +
-    '<table class="meta">' +
-    '<tr><td class="label">Entity Name:</td><td></td><td class="label">RIS #:</td><td>' + risCoreEscapeHtml_(entry.risNo || entry.recordId) + '</td></tr>' +
-    '<tr><td class="label">Office:</td><td>' + risCoreEscapeHtml_(entry.deliveryLocation || entry.requestorProgram) + '</td><td class="label">Date:</td><td>' + risCoreEscapeHtml_(risCoreFormatDate_(entry.deliveryDate)) + '</td></tr>' +
-    '<tr><td class="label">Division:</td><td>' + risCoreEscapeHtml_(RIS_PDF_CONFIG.divisionName) + '</td><td class="label">Category:</td><td>' + risCoreEscapeHtml_(entry.category) + '</td></tr>' +
+    '<table class="brand"><tr><td class="logo-cell">' + logoHtml + '</td><td class="title-cell"><h1>REQUISITION AND ISSUE SLIP</h1><h2>CITY GOVERNMENT OF PASIG</h2></td></tr></table>' +
+    '<table class="meta"><colgroup><col style="width:8%"><col style="width:46%"><col style="width:8%"><col style="width:15%"><col style="width:8%"><col style="width:15%"></colgroup>' +
+    '<tr><th>Entity Name:</th><td class="left-value">' + risCoreEscapeHtml_(entry.requestorProgram || '') + '</td><th class="label-small">RIS No.:</th><td class="value-small accent">' + risCoreEscapeHtml_(entry.risNo || entry.recordId || '') + '</td><th class="label-small">Date:</th><td class="value-small accent">' + risCoreEscapeHtml_(risPdfDate_(entry.deliveryDate, '')) + '</td></tr>' +
+    '<tr><th>Office:</th><td>' + risCoreEscapeHtml_(entry.deliveryLocation || '') + '</td><td colspan="4"></td></tr>' +
+    '<tr><th>Division:</th><td><b>' + risCoreEscapeHtml_(RIS_PDF_CONFIG.divisionName) + '</b></td><td colspan="4"></td></tr>' +
     '</table>' +
-    '<table class="items">' +
-    '<thead><tr>' +
-    '<th>Item Code</th><th>Item Description</th><th>Unit</th><th>Purchase Order #</th><th>Batch/Lot</th><th>Expiration</th><th>Qty Requested</th><th>Yes</th><th>No</th><th>Qty Issued</th><th>Unit Cost</th><th>Total Amount</th><th>Remarks</th>' +
-    '</tr></thead><tbody>' + rows +
-    '<tr class="total-row"><td colspan="11" class="num">TOTAL</td><td class="num">' + risCoreEscapeHtml_(grandTotal.toFixed(2)) + '</td><td></td></tr>' +
+    '<table class="items"><colgroup>' +
+    '<col style="width:9%"><col style="width:25%"><col style="width:5%"><col style="width:8%"><col style="width:6%"><col style="width:7%"><col style="width:7%"><col style="width:3%"><col style="width:3%"><col style="width:7%"><col style="width:7%"><col style="width:8%"><col style="width:5%">' +
+    '</colgroup><thead><tr class="group"><th colspan="7">Requisition</th><th colspan="6">Issuance</th></tr>' +
+    '<tr class="head"><th>Item Code</th><th>Item Description</th><th>Unit of Measurement</th><th>Purchase Order #</th><th>Batch / Lot No.</th><th>Expiration Date</th><th>Quantity Requested</th><th>yes</th><th>no</th><th>Quantity Requested</th><th>Unit Cost</th><th>Total Amount</th><th>Remarks</th></tr></thead>' +
+    '<tbody>' + itemRows +
+    '<tr class="grand"><td colspan="11" class="grand-label">Grand Total:</td><td colspan="2" class="grand-value">' + risCoreEscapeHtml_(risPdfMoney_(grandTotal)) + '</td></tr>' +
     '</tbody></table>' +
-    '<div class="purpose"><b>Purpose:</b> ' + risCoreEscapeHtml_(entry.purpose || '') + '</div>' +
-    '<table class="signatures">' +
-    '<tr><td>Requested by:</td><td>Approved by:</td><td>Issued by:</td><td>Received by:</td></tr>' +
-    '<tr><td>' + risCoreEscapeHtml_(entry.requestedBy) + '</td><td>' + risCoreEscapeHtml_(entry.approvedBy) + '</td><td>' + risCoreEscapeHtml_(entry.issuedBy) + '</td><td>' + risCoreEscapeHtml_(entry.receivedBy) + '</td></tr>' +
-    '<tr><td class="small">Signature / Printed Name / Date</td><td class="small">Signature / Printed Name / Date</td><td class="small">Signature / Printed Name / Date</td><td class="small">Signature / Printed Name / Date</td></tr>' +
+    '<table class="purpose"><tr><td>Purpose: ' + risCoreEscapeHtml_(entry.purpose || '') + '</td></tr></table>' +
+    '<table class="signatures"><colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>' +
+    '<tr><td></td><th>Requested by:</th><th>Approved by:</th><th>Issued by:</th><th>Received by:</th></tr>' +
+    '<tr><td class="row-label">Signature:</td><td></td><td></td><td></td><td></td></tr>' +
+    '<tr><td class="row-label">Printed Name:</td><td class="name">' + risCoreEscapeHtml_(entry.requestedBy || '') + '</td><td class="name">' + risCoreEscapeHtml_(entry.approvedBy || '') + '</td><td class="name">' + risCoreEscapeHtml_(entry.issuedBy || '') + '</td><td class="name">' + risCoreEscapeHtml_(entry.receivedBy || '') + '</td></tr>' +
+    '<tr><td class="row-label">Designation:</td><td></td><td></td><td></td><td></td></tr>' +
+    '<tr><td class="row-label">Date:</td><td></td><td></td><td></td><td></td></tr>' +
     '</table>' +
-    '<p class="small" style="margin-top:10px;">Prepared by: ' + risCoreEscapeHtml_(user.fullName + ' / ' + user.username) + '</p>' +
+    '<table class="prepared"><tr><td colspan="3">Prepared RIS by:</td><td colspan="2">Checked By:</td></tr>' +
+    '<tr><td colspan="3" class="value">' + risCoreEscapeHtml_(user.fullName + ' / ' + user.username) + '</td><td colspan="2" class="value"></td></tr></table>' +
     '</body></html>';
+}
+
+function risPdfBuildItemRows_(items) {
+  const rows = [];
+  items.forEach(function(item) {
+    rows.push('<tr>' +
+      '<td>' + risCoreEscapeHtml_(item.itemCode) + '</td>' +
+      '<td class="desc">' + risCoreEscapeHtml_(item.itemDescription) + '</td>' +
+      '<td>' + risCoreEscapeHtml_(item.uom) + '</td>' +
+      '<td>' + risCoreEscapeHtml_(item.poWithSupplier) + '</td>' +
+      '<td>' + risCoreEscapeHtml_(item.batch || 'N/A') + '</td>' +
+      '<td>' + risCoreEscapeHtml_(risPdfDate_(item.expiry, 'N/A')) + '</td>' +
+      '<td class="num">' + risCoreEscapeHtml_(risPdfQuantity_(item.qtyRequested)) + '</td>' +
+      '<td class="stock">' + (item.stockAvailable ? RIS_PDF_CONFIG.stockMark : '') + '</td>' +
+      '<td class="stock">' + (item.stockAvailable ? '' : RIS_PDF_CONFIG.stockMark) + '</td>' +
+      '<td class="num">' + risCoreEscapeHtml_(risPdfQuantity_(item.issuedQty)) + '</td>' +
+      '<td class="num">' + risCoreEscapeHtml_(risPdfAmount_(item.unitCost)) + '</td>' +
+      '<td class="num">' + risCoreEscapeHtml_(risPdfAmount_(item.totalCost)) + '</td>' +
+      '<td>' + risCoreEscapeHtml_(item.remarks) + '</td>' +
+      '</tr>');
+  });
+
+  const minimumRows = Math.max(RIS_PDF_CONFIG.minimumItemRows || 0, items.length);
+  for (let i = items.length; i < minimumRows; i++) {
+    rows.push('<tr class="blank"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>');
+  }
+
+  return rows.join('');
+}
+
+function risPdfGetPasigLogoDataUri_() {
+  const fileId = risPdfDriveFileId_(RIS_PDF_CONFIG.pasigLogoFileId);
+  if (!fileId || fileId.indexOf('PASTE_') === 0) return '';
+
+  try {
+    return risPdfImageDataUriFromBlob_(DriveApp.getFileById(fileId).getBlob());
+  } catch (driveError) {
+    try {
+      const response = UrlFetchApp.fetch('https://drive.google.com/uc?export=download&id=' + encodeURIComponent(fileId), {
+        muteHttpExceptions: true
+      });
+      if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) return '';
+      return risPdfImageDataUriFromBlob_(response.getBlob());
+    } catch (fetchError) {
+      return '';
+    }
+  }
+}
+
+function risPdfImageDataUriFromBlob_(blob) {
+  const contentType = blob.getContentType() || 'image/png';
+  if (contentType.indexOf('image/') !== 0) return '';
+  return 'data:' + contentType + ';base64,' + Utilities.base64Encode(blob.getBytes());
+}
+
+function risPdfDriveFileId_(value) {
+  const text = String(value || '').trim();
+  const pathMatch = text.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (pathMatch) return pathMatch[1];
+  const queryMatch = text.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (queryMatch) return queryMatch[1];
+  return text;
+}
+
+function risPdfDate_(value, blankText) {
+  const date = risCoreParseDate_(value);
+  if (date) return Utilities.formatDate(date, Session.getScriptTimeZone(), 'MM/dd/yyyy');
+  return value || blankText || '';
+}
+
+function risPdfQuantity_(value) {
+  if (value === '' || value === null || value === undefined) return '';
+  const number = risCoreParseNumber_(value);
+  return number.toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+
+function risPdfAmount_(value) {
+  if (value === '' || value === null || value === undefined) return '';
+  const number = risCoreParseNumber_(value);
+  return number.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function risPdfMoney_(value) {
+  return String.fromCharCode(8369) + ' ' + risPdfAmount_(value);
 }
 
 function risPdfSendNotification_(ss, entry, items, file, user) {
