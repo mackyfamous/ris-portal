@@ -370,13 +370,20 @@ function risExcelFillTemplate_(sheet, entry, items, user) {
 }
 
 function risExcelExportToXlsx_(spreadsheet, risNo) {
-  if (typeof Drive === 'undefined' || !Drive.Files || !Drive.Files.export) {
-    throw new Error('Enable the Advanced Drive service to export the generated Excel file.');
-  }
-
   const folder = DriveApp.getFolderById(RIS_EXCEL_CONFIG.outputFolderId);
   const fileName = risExcelSafeFileName_(risNo) + ' - RIS.xlsx';
-  const blob = Drive.Files.export(spreadsheet.getId(), RIS_EXCEL_CONFIG.xlsxMimeType);
+  const exportUrl = 'https://docs.google.com/spreadsheets/d/' + spreadsheet.getId() + '/export?format=xlsx';
+  const response = UrlFetchApp.fetch(exportUrl, {
+    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+    muteHttpExceptions: true
+  });
+
+  const status = response.getResponseCode();
+  if (status < 200 || status >= 300) {
+    throw new Error('Excel export failed with HTTP ' + status + ': ' + response.getContentText().slice(0, 500));
+  }
+
+  const blob = response.getBlob();
   blob.setName(fileName);
   return folder.createFile(blob);
 }
