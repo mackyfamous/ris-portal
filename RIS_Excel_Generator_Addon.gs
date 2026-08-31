@@ -13,11 +13,12 @@ const RIS_EXCEL_CONFIG = {
   sheetName: '',
   stockAvailableMark: 'ü',
   stockUnavailableMark: 'ü',
+  stockMarkFontFamily: 'Wingdings',
   itemFontSize: 60,
   itemRowHeight: 350,
   dateNumberFormat: 'mm-dd-yy',
-  quantityNumberFormat: '#,##0.##',
-  moneyNumberFormat: '#,##0.##',
+  quantityNumberFormat: 'General',
+  moneyNumberFormat: '_-[$₱-3409]* #,##0.00_-;\\-[$₱-3409]* #,##0.00_-;_-[$₱-3409]* "-"??_-;_-@',
   nothingFollowsText: '***************** Nothing Follows ****************',
   xlsxMimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   headerCells: {
@@ -391,6 +392,7 @@ function risExcelFormatItemArea_(sheet, start, end) {
   sheet.setRowHeights(start, rowCount, RIS_EXCEL_CONFIG.itemRowHeight);
   sheet.getRange(start, columns.expiry, rowCount, 1).setNumberFormat(RIS_EXCEL_CONFIG.dateNumberFormat);
   sheet.getRange(start, columns.qtyRequested, rowCount, 1).setNumberFormat(RIS_EXCEL_CONFIG.quantityNumberFormat);
+  sheet.getRange(start, columns.stockYes, rowCount, 1).setFontFamily(RIS_EXCEL_CONFIG.stockMarkFontFamily);
   sheet.getRange(start, columns.issuedQty, rowCount, 1).setNumberFormat(RIS_EXCEL_CONFIG.quantityNumberFormat);
   sheet.getRange(start, columns.unitCost, rowCount, 1).setNumberFormat(RIS_EXCEL_CONFIG.moneyNumberFormat);
   sheet.getRange(start, columns.totalCost, rowCount, 1).setNumberFormat(RIS_EXCEL_CONFIG.moneyNumberFormat);
