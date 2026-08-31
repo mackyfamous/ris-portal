@@ -137,12 +137,12 @@ function risSourceMembers_(source) {
 
 function risFindSourceMemberForItem_(source, item) {
   const members = risSourceMembers_(source);
-  const wantedSheet = risCoreNormalizeText_(item && item.sourceSheet);
+  const wantedSheet = risNormalizeSheetName_(item && item.sourceSheet);
   const wantedId = risCoreNormalizeText_(risNormalizeSpreadsheetId_(item && item.sourceSpreadsheetId));
 
   if (wantedSheet) {
     const match = members.find(function(member) {
-      if (risCoreNormalizeText_(member.sourceSheetName) !== wantedSheet) return false;
+      if (risNormalizeSheetName_(member.sourceSheetName) !== wantedSheet) return false;
       if (!wantedId || wantedId === 'same') return true;
       const configuredId = risCoreNormalizeText_(risNormalizeSpreadsheetId_(member.sourceSpreadsheetId));
       return configuredId === 'same' || configuredId === wantedId;
@@ -153,6 +153,31 @@ function risFindSourceMemberForItem_(source, item) {
   if (members.length === 1) return members[0];
 
   throw new Error('The selected item does not include a valid source sheet for ' + (source.buttonName || source.category || 'this source') + '.');
+}
+
+function risResolveSourceSheet_(ss, source) {
+  const configuredName = String(source && source.sourceSheetName || '').trim();
+  const exact = ss.getSheetByName(configuredName);
+  if (exact) return exact;
+
+  const configuredKey = risNormalizeSheetName_(configuredName);
+  const sheets = ss.getSheets();
+  const normalized = sheets.find(function(sheet) {
+    return risNormalizeSheetName_(sheet.getName()) === configuredKey;
+  });
+  if (normalized) return normalized;
+
+  const available = sheets.map(function(sheet) { return sheet.getName(); }).join(', ') || 'none';
+  throw new Error('Source sheet not found: ' + configuredName + '. Available tabs: ' + available);
+}
+
+function risNormalizeSheetName_(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function risReadInventoryRows_(source, selectedProgram) {
@@ -183,10 +208,10 @@ function risReadInventoryRows_(source, selectedProgram) {
 function risReadInventoryRowsForSingleSource_(source, selectedProgram) {
   const ss = risCoreOpenSourceSpreadsheet_(source);
   const sourceSpreadsheetId = ss.getId();
-  const sheet = ss.getSheetByName(source.sourceSheetName);
-  if (!sheet) throw new Error('Source sheet not found: ' + source.sourceSheetName);
+  const sheet = risResolveSourceSheet_(ss, source);
+  const resolvedSource = Object.assign({}, source, { sourceSheetName: sheet.getName() });
 
-  const layout = risGetInventoryLayout_(sheet, source);
+  const layout = risGetInventoryLayout_(sheet, resolvedSource);
   const lastRow = sheet.getLastRow();
   const rows = [];
   const statusCounts = { available: 0, low: 0, out: 0 };
@@ -197,7 +222,7 @@ function risReadInventoryRowsForSingleSource_(source, selectedProgram) {
   const values = sheet.getRange(layout.headerRow + 1, 1, lastRow - layout.headerRow, sheet.getLastColumn()).getValues();
   values.forEach(function(row, offset) {
     const rowNumber = layout.headerRow + 1 + offset;
-    const item = risMapInventoryRow_(row, layout, source, rowNumber);
+    const item = risMapInventoryRow_(row, layout, resolvedSource, rowNumber);
     if (!item.itemDescription) return;
     if (selectedKey && risCoreNormalizeText_(item.program) !== selectedKey) return;
 
@@ -208,9 +233,9 @@ function risReadInventoryRowsForSingleSource_(source, selectedProgram) {
     item.deliveryDate = risCoreFormatDate_(item.deliveryDate);
     item.sourceRow = rowNumber;
     item.sourceHeaderRow = layout.headerRow;
-    item.sourceSheet = source.sourceSheetName;
+    item.sourceSheet = sheet.getName();
     item.sourceSpreadsheetId = sourceSpreadsheetId;
-    item.inventorySource = source.buttonName || source.category;
+    item.inventorySource = resolvedSource.buttonName || resolvedSource.category;
     item.status = risStockStatus_(item.stock);
     item.statusLabel = risStockStatusLabel_(item.status);
     statusCounts[item.status] = (statusCounts[item.status] || 0) + 1;
