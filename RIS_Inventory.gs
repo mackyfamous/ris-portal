@@ -34,8 +34,45 @@ function risEnsureSourcesSheet_(ss) {
 }
 
 function risGetSources_(ss) {
+  const rawSources = risGetRawSources_(ss);
+  const groups = {};
+
+  rawSources.forEach(function(source) {
+    if (!groups[source.sourceKey]) {
+      groups[source.sourceKey] = {
+        sourceKey: source.sourceKey,
+        buttonName: source.buttonName,
+        category: source.category,
+        displayOrder: source.displayOrder,
+        sourceSheetName: '',
+        sourceSheetNames: [],
+        sourceCount: 0,
+        sources: []
+      };
+    }
+
+    const group = groups[source.sourceKey];
+    group.sources.push(source);
+    group.displayOrder = Math.min(group.displayOrder, source.displayOrder);
+    if (!group.buttonName && source.buttonName) group.buttonName = source.buttonName;
+    if (!group.category && source.category) group.category = source.category;
+  });
+
+  return Object.keys(groups).map(function(key) {
+    const group = groups[key];
+    group.sources.sort(risCompareSources_);
+    group.sourceSheetNames = group.sources.map(function(source) { return source.sourceSheetName; });
+    group.sourceCount = group.sources.length;
+    group.sourceSheetName = group.sourceCount === 1 ? group.sourceSheetNames[0] : group.sourceCount + ' inventory sheets';
+    return group;
+  }).sort(risCompareSources_);
+}
+
+function risGetRawSources_(ss) {
   const sheet = risEnsureSourcesSheet_(ss);
   const values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+
   const headers = values[0];
   const columns = {
     enabled: risFindHeaderColumn_(headers, ['Enabled']),
@@ -47,24 +84,31 @@ function risGetSources_(ss) {
     category: risFindHeaderColumn_(headers, ['Category'])
   };
 
-  return values.slice(1).map(function(row) {
-    const buttonName = String(row[columns.buttonName - 1] || '').trim();
-    const category = String(row[columns.category - 1] || buttonName).trim();
+  return values.slice(1).map(function(row, index) {
+    const sourceSheetName = columns.sourceSheetName ? String(row[columns.sourceSheetName - 1] || '').trim() : '';
+    const category = columns.category ? String(row[columns.category - 1] || '').trim() : '';
+    const buttonName = (columns.buttonName ? String(row[columns.buttonName - 1] || '').trim() : '') || category || sourceSheetName;
+    const displayOrder = (columns.displayOrder ? risCoreParseNumber_(row[columns.displayOrder - 1]) : 0) || index + 1;
+
     return {
-      sourceKey: risSlug_(category || buttonName),
-      enabled: risCoreTruthy_(row[columns.enabled - 1]),
+      sourceKey: risSlug_(buttonName || category || sourceSheetName),
+      sourceId: risSlug_([buttonName, sourceSheetName, index + 2].join(' ')),
+      enabled: columns.enabled ? risCoreTruthy_(row[columns.enabled - 1]) : true,
       buttonName: buttonName,
-      sourceSpreadsheetId: risNormalizeSpreadsheetId_(row[columns.sourceSpreadsheetId - 1]),
-      sourceSheetName: String(row[columns.sourceSheetName - 1] || '').trim(),
-      headerRow: row[columns.headerRow - 1] || 'auto',
-      displayOrder: risCoreParseNumber_(row[columns.displayOrder - 1]) || 999,
-      category: category
+      sourceSpreadsheetId: risNormalizeSpreadsheetId_(columns.sourceSpreadsheetId ? row[columns.sourceSpreadsheetId - 1] : 'same'),
+      sourceSheetName: sourceSheetName,
+      headerRow: columns.headerRow ? (row[columns.headerRow - 1] || 'auto') : 'auto',
+      displayOrder: displayOrder,
+      category: category || buttonName,
+      configRow: index + 2
     };
   }).filter(function(source) {
-    return source.enabled && source.buttonName && source.sourceSheetName;
-  }).sort(function(a, b) {
-    return a.displayOrder - b.displayOrder || a.buttonName.localeCompare(b.buttonName);
-  });
+    return source.enabled && source.sourceKey && source.sourceSheetName;
+  }).sort(risCompareSources_);
+}
+
+function risCompareSources_(a, b) {
+  return (a.displayOrder || 999) - (b.displayOrder || 999) || String(a.buttonName || '').localeCompare(String(b.buttonName || ''));
 }
 
 function risPublicSource_(source) {
@@ -73,6 +117,8 @@ function risPublicSource_(source) {
     buttonName: source.buttonName,
     category: source.category,
     sourceSheetName: source.sourceSheetName,
+    sourceSheetNames: source.sourceSheetNames || [source.sourceSheetName],
+    sourceCount: source.sourceCount || risSourceMembers_(source).length,
     displayOrder: source.displayOrder
   };
 }
@@ -84,8 +130,59 @@ function risFindSourceByKey_(sources, sourceKey) {
   });
 }
 
+function risSourceMembers_(source) {
+  if (!source) return [];
+  return source.sources && source.sources.length ? source.sources : [source];
+}
+
+function risFindSourceMemberForItem_(source, item) {
+  const members = risSourceMembers_(source);
+  const wantedSheet = risCoreNormalizeText_(item && item.sourceSheet);
+  const wantedId = risCoreNormalizeText_(risNormalizeSpreadsheetId_(item && item.sourceSpreadsheetId));
+
+  if (wantedSheet) {
+    const match = members.find(function(member) {
+      if (risCoreNormalizeText_(member.sourceSheetName) !== wantedSheet) return false;
+      if (!wantedId || wantedId === 'same') return true;
+      const configuredId = risCoreNormalizeText_(risNormalizeSpreadsheetId_(member.sourceSpreadsheetId));
+      return configuredId === 'same' || configuredId === wantedId;
+    });
+    if (match) return match;
+  }
+
+  if (members.length === 1) return members[0];
+
+  throw new Error('The selected item does not include a valid source sheet for ' + (source.buttonName || source.category || 'this source') + '.');
+}
+
 function risReadInventoryRows_(source, selectedProgram) {
+  const rows = [];
+  const warnings = [];
+  const statusCounts = { available: 0, low: 0, out: 0 };
+  const members = risSourceMembers_(source);
+
+  members.forEach(function(member) {
+    try {
+      const result = risReadInventoryRowsForSingleSource_(member, selectedProgram);
+      rows.push.apply(rows, result.rows);
+      statusCounts.available += result.statusCounts.available || 0;
+      statusCounts.low += result.statusCounts.low || 0;
+      statusCounts.out += result.statusCounts.out || 0;
+    } catch (error) {
+      warnings.push(member.sourceSheetName + ': ' + risCoreErrorMessage_(error));
+    }
+  });
+
+  if (rows.length === 0 && warnings.length > 0 && warnings.length === members.length) {
+    throw new Error('Could not load inventory for ' + (source.buttonName || source.category || 'selected source') + '. ' + warnings.join(' | '));
+  }
+
+  return { rows: rows, statusCounts: statusCounts, warnings: warnings };
+}
+
+function risReadInventoryRowsForSingleSource_(source, selectedProgram) {
   const ss = risCoreOpenSourceSpreadsheet_(source);
+  const sourceSpreadsheetId = ss.getId();
   const sheet = ss.getSheetByName(source.sourceSheetName);
   if (!sheet) throw new Error('Source sheet not found: ' + source.sourceSheetName);
 
@@ -112,10 +209,11 @@ function risReadInventoryRows_(source, selectedProgram) {
     item.sourceRow = rowNumber;
     item.sourceHeaderRow = layout.headerRow;
     item.sourceSheet = source.sourceSheetName;
-    item.sourceSpreadsheetId = source.sourceSpreadsheetId;
+    item.sourceSpreadsheetId = sourceSpreadsheetId;
+    item.inventorySource = source.buttonName || source.category;
     item.status = risStockStatus_(item.stock);
     item.statusLabel = risStockStatusLabel_(item.status);
-    statusCounts[item.status] += 1;
+    statusCounts[item.status] = (statusCounts[item.status] || 0) + 1;
     rows.push(item);
   });
 
