@@ -551,14 +551,55 @@
         .withSuccessHandler(function(response) {
           setBusy(false);
           if (!response || !response.success) return setMessage('RIS was not saved: ' + getErrorMessage(response), 'error');
-          alert('RIS request saved successfully.\n\nRIS Number: ' + response.risNo + (response.testingMode ? '\n\nTesting mode: stock was not deducted.' : ''));
-          window.location.reload();
+          showSubmitSuccess(response);
+          resetPortalFormAfterSubmit();
+          refreshRisNo();
         })
         .withFailureHandler(function(error) {
           setBusy(false);
           setMessage('RIS was not saved: ' + getErrorMessage(error), 'error');
         })
         .submitTransaction(payload);
+    }
+
+    function showSubmitSuccess(response) {
+      var message = 'RIS request saved successfully.\n\nRIS Number: ' + response.risNo;
+      if (response.testingMode) message += '\n\nTesting mode: stock was not deducted.';
+      setMessage('RIS request saved successfully: ' + response.risNo + (response.testingMode ? ' Testing mode: stock was not deducted.' : ''), 'success');
+      try {
+        window.alert(message);
+      } catch (error) {
+        // The success banner remains visible if the browser blocks alert dialogs.
+      }
+    }
+
+    function resetPortalFormAfterSubmit() {
+      selectedSourceKey = '';
+      currentInventory = [];
+      selectedItems = [];
+
+      renderSourceButtons();
+      renderCart();
+      updateStatusCounts({});
+
+      document.getElementById('inventoryPanel').style.display = 'none';
+      document.getElementById('sourceLabel').textContent = '';
+      document.getElementById('inventoryBody').innerHTML = '<tr><td colspan="10" class="text-center text-muted p-4">Choose a program, then show items.</td></tr>';
+
+      var programSelect = document.getElementById('programSelect');
+      programSelect.disabled = true;
+      programSelect.innerHTML = '<option value="">Choose Medicine or Supplies first</option>';
+
+      document.getElementById('loadInventoryBtn').disabled = true;
+      document.getElementById('searchInput').value = '';
+      document.getElementById('statusFilter').value = '';
+
+      ['deliveryDate', 'deliveryLocation', 'requestorEmail', 'requestedBy', 'approvedBy', 'receivedBy', 'issuedBy', 'purpose'].forEach(function(id) {
+        document.getElementById(id).value = '';
+      });
+
+      setupDeliveryDate();
+      window.scrollTo(0, 0);
     }
 
     function validatePayload(payload) {
