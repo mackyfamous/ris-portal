@@ -10,8 +10,9 @@ const RIS_CONFIG = {
   sourcesSheetName: 'RIS Sources',
   entriesSheetName: 'RIS Entries',
   itemsSheetName: 'RIS Items',
-  emailsSheetNames: ['Emails', 'emails', 'EMAILS'],
-  holidaysSheetName: 'Holidays',
+  adminEmailsSheetName: 'Admin Emails',
+  clientEmailsSheetName: 'Client Emails',
+  legacyEmailsSheetNames: ['Emails', 'emails', 'EMAILS'],
   usersSheetName: 'Users',
   minimumWorkingDays: 5,
   lowStockThreshold: 10,
@@ -60,7 +61,7 @@ function authorizeEmailNotifications() {
   const ss = risCoreGetTransactionsSpreadsheet_();
   const recipients = risCoreReadEmailRecipients_(ss);
   const target = recipients.to[0] || Session.getActiveUser().getEmail();
-  if (!target) throw new Error('Add an email address in the Emails sheet before authorizing.');
+  if (!target) throw new Error('Add at least one recipient in Admin Emails or Client Emails before authorizing.');
 
   MailApp.sendEmail({
     to: target,
@@ -159,12 +160,13 @@ function submitTransaction(payload) {
       throw new Error('Choose an allowed delivery date.');
     }
 
+    const friendlyInventorySource = source.buttonName || source.category || source.sourceSheetName;
     const entry = {
       timestamp: now,
       recordId: risNo,
       risNo: risNo,
       category: source.category,
-      inventorySource: source.sourceSheetName,
+      inventorySource: friendlyInventorySource,
       deliveryDate: deliveryDate,
       requestorProgram: risRequiredText_(payload.requestorProgram, 'Requestor Program'),
       requestorEmail: risRequiredText_(payload.requestorEmail, 'Requestor Email'),
@@ -186,7 +188,7 @@ function submitTransaction(payload) {
       item.recordId = risNo;
       item.risNo = risNo;
       item.category = source.category;
-      item.inventorySource = source.sourceSheetName;
+      item.inventorySource = friendlyInventorySource;
       risCoreAppendRecord_(itemsSheet, RIS_ITEMS_DEFAULT_HEADERS, RIS_ITEMS_ALIASES, RIS_ITEMS_FIELD_ORDER, item);
     });
 
@@ -209,6 +211,7 @@ function risValidateAndPrepareItems_(payload, source) {
   if (!payload || !payload.items || payload.items.length === 0) throw new Error('Add at least one item.');
 
   const sourceSpreadsheet = risCoreOpenSourceSpreadsheet_(source);
+  const sourceSpreadsheetId = sourceSpreadsheet.getId();
   const sheet = sourceSpreadsheet.getSheetByName(source.sourceSheetName);
   if (!sheet) throw new Error('Source sheet not found: ' + source.sourceSheetName);
   const layout = risGetInventoryLayout_(sheet, source);
@@ -245,7 +248,7 @@ function risValidateAndPrepareItems_(payload, source) {
       unitCost: unitCost,
       totalCost: issuedQty * unitCost,
       remarks: item.remarks || current.remarks || '',
-      sourceSpreadsheetId: source.sourceSpreadsheetId,
+      sourceSpreadsheetId: sourceSpreadsheetId,
       sourceSheet: source.sourceSheetName,
       sourceRow: sourceRow,
       sourceHeaderRow: layout.headerRow
