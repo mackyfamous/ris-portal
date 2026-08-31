@@ -133,6 +133,8 @@ Default rows:
 | TRUE | Medicine | same | DRUGS and MEDICINES | auto | 1 | Medicine |
 | TRUE | Supplies | same | 2026 SUPPLIES | auto | 2 | Supplies |
 
+`Source Sheet Name` should match the actual inventory tab name. The code tolerates capitalization, extra spaces, and `&` versus `and`, but the safest setup is still to copy the tab name directly from the inventory workbook. If the actual medicine tab is named `MEDICINES`, change the Medicine row from `DRUGS and MEDICINES` to `MEDICINES`.
+
 To add more inventory sheets under the same button, add more rows with the same `Button Name` and `Category`:
 
 | Enabled | Button Name | Source Spreadsheet ID | Source Sheet Name | Header Row | Display Order | Category |
