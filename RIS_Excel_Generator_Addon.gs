@@ -7,16 +7,17 @@ const RIS_EXCEL_CONFIG = {
   outputFolderId: 'PASTE_EXCEL_OUTPUT_FOLDER_ID',
   notificationSubjectPrefix: '[RIS Excel] Generated: ',
   divisionName: 'CITY HEALTH DEPARTMENT',
+  risNoLabelPrefix: 'RIS #: ',
   itemStartRow: 10,
   itemEndRow: 40,
   sheetName: '',
-  stockAvailableMark: 'YES',
-  stockUnavailableMark: 'NO',
+  stockAvailableMark: 'ü',
+  stockUnavailableMark: 'ü',
   xlsxMimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   headerCells: {
     office: 'C6',
     division: 'C7',
-    risNo: 'J7',
+    risNo: 'I7',
     date: 'M7',
     purpose: 'C42',
     requestedBy: 'C46',
@@ -75,7 +76,7 @@ function risExcelAuthorize() {
   const ss = risCoreGetTransactionsSpreadsheet_();
   const recipients = risCoreReadEmailRecipients_(ss);
   const target = recipients.to[0] || Session.getActiveUser().getEmail();
-  if (!target) throw new Error('Add an email address in the Emails sheet before authorizing.');
+  if (!target) throw new Error('Add an email address in Admin Emails or Client Emails before authorizing.');
 
   MailApp.sendEmail({
     to: target,
@@ -332,7 +333,7 @@ function risExcelFillTemplate_(sheet, entry, items, user) {
   const cells = RIS_EXCEL_CONFIG.headerCells;
   sheet.getRange(cells.office).setValue(entry.deliveryLocation || entry.requestorProgram || '');
   sheet.getRange(cells.division).setValue(RIS_EXCEL_CONFIG.divisionName);
-  sheet.getRange(cells.risNo).setValue(entry.risNo || entry.recordId || '');
+  sheet.getRange(cells.risNo).setValue(RIS_EXCEL_CONFIG.risNoLabelPrefix + (entry.risNo || entry.recordId || ''));
   sheet.getRange(cells.date).setValue(entry.deliveryDate || new Date());
   sheet.getRange(cells.purpose).setValue(entry.purpose || '');
   sheet.getRange(cells.requestedBy).setValue(entry.requestedBy || '');
