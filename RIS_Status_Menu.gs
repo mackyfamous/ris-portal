@@ -1,99 +1,211 @@
 // ==========================================
-// RIS STATUS EMAIL MENU
+// RIS STATUS MENU
 // ==========================================
 
 const RIS_STATUS_CONFIG = {
   menuName: 'RIS Status',
+  defaultStatus: 'Request Submitted',
   requestStatuses: ['Request Submitted', 'Request Approved', 'Request Rejected'],
-  deliveryStatuses: ['RIS NOT Signed', 'RIS Discrepancy', 'RIS Signed Completed']
+  deliveryStatuses: ['RIS NOT Signed', 'RIS Discrepancy', 'RIS Signed Completed'],
+  sendToConfiguredRecipients: true,
+  sendToRequestor: true,
+  notificationCc: ''
 };
 
 function risStatusAddMenu_() {
   SpreadsheetApp.getUi()
     .createMenu(RIS_STATUS_CONFIG.menuName)
-    .addItem('Send Request Status email', 'risStatusSendRequestStatusPrompt')
-    .addItem('Send Delivery Status email', 'risStatusSendDeliveryStatusPrompt')
+    .addItem('Show Current Status', 'risStatusShowCurrentPrompt')
+    .addSeparator()
+    .addItem('Update Request Status', 'risStatusUpdateRequestStatusPrompt')
+    .addItem('Update Delivery Status', 'risStatusUpdateDeliveryStatusPrompt')
+    .addSeparator()
+    .addItem('Email Request Status', 'risStatusSendRequestStatusPrompt')
+    .addItem('Email Delivery Status', 'risStatusSendDeliveryStatusPrompt')
     .addToUi();
 }
 
+function risStatusShowCurrentPrompt() {
+  const ui = SpreadsheetApp.getUi();
+  const risNo = risStatusPromptRisNo_(ui);
+  if (!risNo) return;
+
+  try {
+    const bundle = risCoreGetRisBundle_(risNo);
+    const entry = bundle.entry;
+    ui.alert(
+      'Current RIS Status',
+      [
+        'RIS No.: ' + (entry.risNo || entry.recordId || risNo),
+        'Status: ' + risStatusCurrentStatus_(entry),
+        'Program: ' + (entry.requestorProgram || ''),
+        'Category: ' + (entry.category || entry.inventorySource || '')
+      ].join('\n'),
+      ui.ButtonSet.OK
+    );
+  } catch (error) {
+    ui.alert('Could not load RIS status:\n\n' + risCoreErrorMessage_(error));
+  }
+}
+
+function risStatusUpdateRequestStatusPrompt() {
+  risStatusPromptAndApply_('request', false);
+}
+
+function risStatusUpdateDeliveryStatusPrompt() {
+  risStatusPromptAndApply_('delivery', false);
+}
+
 function risStatusSendRequestStatusPrompt() {
-  risStatusPromptAndSend_('request');
+  risStatusPromptAndApply_('request', true);
 }
 
 function risStatusSendDeliveryStatusPrompt() {
-  risStatusPromptAndSend_('delivery');
+  risStatusPromptAndApply_('delivery', true);
 }
 
-function risStatusPromptAndSend_(kind) {
+function risStatusPromptAndApply_(kind, sendEmail) {
   const ui = SpreadsheetApp.getUi();
-  const risResponse = ui.prompt('Find RIS Record', 'Enter RIS No. or Record ID:', ui.ButtonSet.OK_CANCEL);
-  if (risResponse.getSelectedButton() !== ui.Button.OK) return;
+  const normalizedKind = risStatusNormalizeKind_(kind);
+  const risNo = risStatusPromptRisNo_(ui);
+  if (!risNo) return;
 
-  const risNo = risResponse.getResponseText().trim();
-  if (!risNo) {
-    ui.alert('Please enter the RIS No.');
-    return;
-  }
-
-  const statuses = kind === 'delivery' ? RIS_STATUS_CONFIG.deliveryStatuses : RIS_STATUS_CONFIG.requestStatuses;
+  const statuses = risStatusChoices_(normalizedKind);
   const statusResponse = ui.prompt(
-    kind === 'delivery' ? 'Delivery Status' : 'Request Status',
+    normalizedKind === 'delivery' ? 'Delivery Status' : 'Request Status',
     'Enter one status exactly:\n\n' + statuses.join('\n'),
     ui.ButtonSet.OK_CANCEL
   );
   if (statusResponse.getSelectedButton() !== ui.Button.OK) return;
 
-  const status = risStatusNormalizeChoice_(statusResponse.getResponseText(), statuses);
-  if (!status) {
-    ui.alert('Please choose one of these statuses:\n\n' + statuses.join('\n'));
+  let status;
+  try {
+    status = risStatusValidateStatus_(statusResponse.getResponseText(), normalizedKind);
+  } catch (error) {
+    ui.alert(risCoreErrorMessage_(error));
     return;
   }
 
+  const username = risStatusPromptUsername_(ui);
+  if (username === null) return;
+
   try {
-    const result = risStatusSendByRisNo_(risNo, status, kind);
+    const result = sendEmail
+      ? risStatusSendByRisNo_(risNo, status, normalizedKind, username)
+      : risStatusUpdateByRisNo_(risNo, status, normalizedKind, username);
     ui.alert(result.message);
   } catch (error) {
-    ui.alert('Could not send status email:\n\n' + risCoreErrorMessage_(error));
+    ui.alert((sendEmail ? 'Could not send status email:' : 'Could not update RIS status:') + '\n\n' + risCoreErrorMessage_(error));
   }
 }
 
-function risStatusSendByRisNo(risNo, status, kind) {
-  return risStatusSendByRisNo_(risNo, status, kind || 'request');
+function risStatusPromptRisNo_(ui) {
+  const selectedRisNo = risStatusGetSelectedRisKey_();
+  const helper = selectedRisNo
+    ? '\n\nSelected row detected: ' + selectedRisNo + '\nLeave the prompt blank to use the selected row.'
+    : '';
+  const risResponse = ui.prompt('Find RIS Record', 'Enter RIS No. or Record ID:' + helper, ui.ButtonSet.OK_CANCEL);
+  if (risResponse.getSelectedButton() !== ui.Button.OK) return '';
+
+  const entered = risResponse.getResponseText().trim();
+  if (entered) return entered;
+  if (selectedRisNo) return selectedRisNo;
+
+  ui.alert('Please enter the RIS No.');
+  return '';
 }
 
-function risStatusSendByRisNo_(risNo, status, kind) {
+function risStatusPromptUsername_(ui) {
+  const userResponse = ui.prompt('Confirm Admin', 'Enter your admin username:', ui.ButtonSet.OK_CANCEL);
+  if (userResponse.getSelectedButton() !== ui.Button.OK) return null;
+
+  const username = userResponse.getResponseText().trim();
+  if (!username) {
+    ui.alert('Username is required.');
+    return null;
+  }
+  return username;
+}
+
+function risStatusUpdateByRisNo(risNo, status, kind, username) {
+  return risStatusUpdateByRisNo_(risNo, status, kind || 'request', username || '');
+}
+
+function risStatusSendByRisNo(risNo, status, kind, username) {
+  return risStatusSendByRisNo_(risNo, status, kind || 'request', username || '');
+}
+
+function risStatusUpdateByRisNo_(risNo, status, kind, username) {
+  const record = risStatusUpdateRecord_(risNo, status, kind, username);
+  return risStatusPublicResult_(record, false);
+}
+
+function risStatusSendByRisNo_(risNo, status, kind, username) {
+  const record = risStatusUpdateRecord_(risNo, status, kind, username);
+  risStatusSendEmail_(record.bundle, record.status, record.kind);
+  return risStatusPublicResult_(record, true);
+}
+
+function risStatusUpdateRecord_(risNo, status, kind, username) {
+  const normalizedKind = risStatusNormalizeKind_(kind);
+  const validStatus = risStatusValidateStatus_(status, normalizedKind);
+  if (username) risCoreValidateActiveUser_(username);
+
   const bundle = risCoreGetRisBundle_(risNo);
-  const ss = bundle.ss;
   const entry = bundle.entry;
-  const recipients = risCoreReadEmailRecipients_(ss);
-  const to = recipients.to.slice();
-
-  if (entry.requestorEmail) to.push(entry.requestorEmail);
-  if (to.length === 0) throw new Error('No email recipients found.');
-
   risCoreUpdateRecordFields_(
     bundle.entriesSheet,
     entry.rowNumber,
     RIS_ENTRIES_DEFAULT_HEADERS,
     RIS_ENTRIES_ALIASES,
-    { risStatus: status }
+    { risStatus: validStatus }
   );
-
-  const subject = risStatusSubject_(entry, status, kind);
-  const htmlBody = risStatusHtmlBody_(entry, status, kind);
-
-  MailApp.sendEmail({
-    to: risCoreUnique_(to).join(','),
-    cc: risCoreUnique_(recipients.cc).join(','),
-    subject: subject,
-    htmlBody: htmlBody,
-    body: risStatusPlainBody_(entry, status, kind)
-  });
+  entry.risStatus = validStatus;
 
   return {
-    success: true,
-    message: 'Status email sent for ' + (entry.risNo || entry.recordId) + '.'
+    bundle: bundle,
+    entry: entry,
+    risNo: entry.risNo || entry.recordId || risNo,
+    status: validStatus,
+    kind: normalizedKind
   };
+}
+
+function risStatusPublicResult_(record, emailed) {
+  return {
+    success: true,
+    risNo: record.risNo,
+    status: record.status,
+    emailed: emailed,
+    message: emailed
+      ? 'RIS status updated to "' + record.status + '" and email sent for ' + record.risNo + '.'
+      : 'RIS status updated to "' + record.status + '" for ' + record.risNo + '.'
+  };
+}
+
+function risStatusSendEmail_(bundle, status, kind) {
+  const ss = bundle.ss;
+  const entry = bundle.entry;
+  const recipients = RIS_STATUS_CONFIG.sendToConfiguredRecipients
+    ? risCoreReadEmailRecipients_(ss)
+    : { to: [], cc: [] };
+  const to = recipients.to.slice();
+  const cc = recipients.cc.slice();
+
+  if (RIS_STATUS_CONFIG.sendToRequestor && entry.requestorEmail) to.push(entry.requestorEmail);
+  if (RIS_STATUS_CONFIG.notificationCc) cc.push(RIS_STATUS_CONFIG.notificationCc);
+  if (to.length === 0) throw new Error('No email recipients found. Add a requestor email or configured recipients first.');
+
+  const message = {
+    to: risCoreUnique_(to).join(','),
+    subject: risStatusSubject_(entry, status, kind),
+    htmlBody: risStatusHtmlBody_(entry, status, kind),
+    body: risStatusPlainBody_(entry, status, kind)
+  };
+  const uniqueCc = risCoreUnique_(cc);
+  if (uniqueCc.length > 0) message.cc = uniqueCc.join(',');
+
+  MailApp.sendEmail(message);
 }
 
 function risStatusSubject_(entry, status, kind) {
@@ -112,6 +224,7 @@ function risStatusPlainBody_(entry, status, kind) {
     '',
     'RIS No.: ' + (entry.risNo || entry.recordId || ''),
     'Status: ' + status,
+    'Category: ' + (entry.category || entry.inventorySource || ''),
     'Program: ' + (entry.requestorProgram || ''),
     'Delivery Location: ' + (entry.deliveryLocation || ''),
     '',
@@ -126,6 +239,7 @@ function risStatusHtmlBody_(entry, status, kind) {
     '<table cellpadding="4" cellspacing="0">',
     '<tr><td><b>RIS No.</b></td><td>' + risCoreEscapeHtml_(entry.risNo || entry.recordId || '') + '</td></tr>',
     '<tr><td><b>Status</b></td><td>' + risCoreEscapeHtml_(status) + '</td></tr>',
+    '<tr><td><b>Category</b></td><td>' + risCoreEscapeHtml_(entry.category || entry.inventorySource || '') + '</td></tr>',
     '<tr><td><b>Program</b></td><td>' + risCoreEscapeHtml_(entry.requestorProgram || '') + '</td></tr>',
     '<tr><td><b>Delivery Location</b></td><td>' + risCoreEscapeHtml_(entry.deliveryLocation || '') + '</td></tr>',
     '</table>',
@@ -152,10 +266,55 @@ function risStatusMessage_(status, kind) {
   return 'Your RIS request has been submitted and is now being processed.';
 }
 
+function risStatusChoices_(kind) {
+  return risStatusNormalizeKind_(kind) === 'delivery'
+    ? RIS_STATUS_CONFIG.deliveryStatuses
+    : RIS_STATUS_CONFIG.requestStatuses;
+}
+
+function risStatusNormalizeKind_(kind) {
+  return risCoreNormalizeText_(kind) === 'delivery' ? 'delivery' : 'request';
+}
+
+function risStatusValidateStatus_(status, kind) {
+  const choices = risStatusChoices_(kind);
+  const choice = risStatusNormalizeChoice_(status, choices);
+  if (choice) return choice;
+
+  if (risCoreNormalizeText_(status) === 'submitted') return RIS_STATUS_CONFIG.defaultStatus;
+  throw new Error('Please choose one of these statuses:\n\n' + choices.join('\n'));
+}
+
+function risStatusCurrentStatus_(entry) {
+  const current = risCleanText_(entry.risStatus);
+  if (risCoreNormalizeText_(current) === 'submitted') return RIS_STATUS_CONFIG.defaultStatus;
+  return current || RIS_STATUS_CONFIG.defaultStatus;
+}
+
 function risStatusNormalizeChoice_(input, choices) {
   const wanted = risCoreNormalizeText_(input);
   for (let i = 0; i < choices.length; i++) {
     if (risCoreNormalizeText_(choices[i]) === wanted) return choices[i];
   }
   return '';
+}
+
+function risStatusGetSelectedRisKey_() {
+  try {
+    const sheet = SpreadsheetApp.getActiveSheet();
+    const range = sheet && sheet.getActiveRange();
+    if (!sheet || !range || range.getRow() <= 1 || sheet.getLastColumn() < 1) return '';
+
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const risAliases = RIS_ENTRIES_ALIASES.risNo.concat(RIS_ITEMS_ALIASES.risNo);
+    const recordAliases = RIS_ENTRIES_ALIASES.recordId.concat(RIS_ITEMS_ALIASES.recordId);
+    const risCol = risFindHeaderColumn_(headers, risAliases);
+    const recordCol = risFindHeaderColumn_(headers, recordAliases);
+    if (!risCol && !recordCol) return '';
+
+    const row = sheet.getRange(range.getRow(), 1, 1, sheet.getLastColumn()).getValues()[0];
+    return risCleanText_(risCol ? row[risCol - 1] : '') || risCleanText_(recordCol ? row[recordCol - 1] : '');
+  } catch (error) {
+    return '';
+  }
 }
