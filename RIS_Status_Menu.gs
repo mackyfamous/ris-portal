@@ -112,7 +112,7 @@ function risStatusShowDeliveryDialog() {
 function risStatusShowDialog_(mode) {
   const html = HtmlService.createHtmlOutput(risStatusBuildDialogHtml_(mode))
     .setWidth(500)
-    .setHeight(mode === 'request' ? 690 : 650);
+    .setHeight(mode === 'request' ? 690 : 720);
   SpreadsheetApp.getUi().showModalDialog(html, mode === 'request' ? 'Request Status' : 'Delivery Status');
 }
 
@@ -788,12 +788,16 @@ function risStatusBuildDialogHtml_(mode) {
   const statusOptions = isRequest ? RIS_STATUS_CONFIG.requestStatuses : RIS_STATUS_CONFIG.deliveryStatuses;
   const dateLabel = isRequest ? 'Request Date' : 'Delivery Date';
   const serverFunction = isRequest ? 'risStatusProcessRequest' : 'risStatusProcessDelivery';
-  const requestLegend = isRequest
+  const statusLegend = isRequest
     ? '<div class="legend">' +
       '<div><strong>Approved</strong> - The requested date is accepted.</div>' +
       '<div><strong>Rescheduled</strong> - The requested date will be rescheduled. Enter the proposed new date and time below. If the proposed schedule is not applicable, the requestor may reply with their preferred date and time.</div>' +
       '</div>'
-    : '';
+    : '<div class="legend">' +
+      '<div><strong>RIS NOT Signed</strong> - Sends a reminder email to the requestor to sign or complete the RIS document.</div>' +
+      '<div><strong>RIS Discrepancy</strong> - Sends a reminder email to msdmedicalsuppliesdepot@gmail.com so the discrepancy can be coordinated and settled.</div>' +
+      '<div><strong>RIS Signed Completed</strong> - Sends a completion email to the requestor.</div>' +
+      '</div>';
 
   return `
     <!doctype html>
@@ -938,7 +942,7 @@ function risStatusBuildDialogHtml_(mode) {
           </div>
 
           <label for="status">Status</label>
-          ${requestLegend}
+          ${statusLegend}
           <select id="status" name="status" required>
             ${statusOptions.map(function(option) {
               return '<option value="' + risCoreEscapeHtml_(option) + '">' + risCoreEscapeHtml_(option) + '</option>';
