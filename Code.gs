@@ -184,7 +184,7 @@ function submitTransaction(payload) {
       receivedBy: risRequiredText_(payload.receivedBy, 'Received By'),
       purpose: payload.purpose || '',
       grandTotal: grandTotal,
-      risStatus: 'Submitted'
+      risStatus: 'Request Submitted'
     };
 
     risCoreAppendRecord_(entriesSheet, RIS_ENTRIES_DEFAULT_HEADERS, RIS_ENTRIES_ALIASES, RIS_ENTRIES_FIELD_ORDER, entry);
