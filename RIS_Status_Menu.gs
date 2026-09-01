@@ -12,7 +12,7 @@ const RIS_STATUS_CONFIG = {
   reminderTriggerFunction: 'risStatusSendDailyReminders',
   headerRow: 1,
   defaultStatus: 'Request Submitted',
-  requestStatuses: ['Approved', 'Reschedule'],
+  requestStatuses: ['Approved', 'Rescheduled'],
   deliveryStatuses: ['RIS NOT Signed', 'RIS Discrepancy', 'RIS Signed Completed'],
   timeOptions: ['AM', 'PM', 'Whole Day']
 };
@@ -81,18 +81,18 @@ function risStatusShowCurrentPrompt() {
   if (!risNo) return;
 
   try {
-    const target = risStatusGetTargetContext_({ targetMode: 'risNo', risNo: risNo });
+    const context = risStatusGetTargetContext_({ targetMode: 'risNo', risNo: risNo });
     ui.alert(
       'Current RIS Status',
       [
-        'RIS No.: ' + target.risNo,
-        'Overall Status: ' + risStatusCurrentOverallStatus_(target),
-        'Request Status: ' + (target.requestStatus || ''),
-        'Request Schedule: ' + risStatusJoinSchedule_(target.requestDate, target.requestTime),
-        'Delivery Status: ' + (target.deliveryStatus || ''),
-        'Delivery Schedule: ' + risStatusJoinSchedule_(target.deliveryDate, target.deliveryTime),
-        'Program: ' + (target.requestorProgram || ''),
-        'Delivery Location: ' + (target.deliveryLocation || '')
+        'RIS No.: ' + context.risNo,
+        'Overall Status: ' + risStatusCurrentOverallStatus_(context),
+        'Request Status: ' + (context.requestStatus || ''),
+        'Request Schedule: ' + risStatusJoinSchedule_(context.requestDate, context.requestTime),
+        'Delivery Status: ' + (context.deliveryStatus || ''),
+        'Delivery Schedule: ' + risStatusJoinSchedule_(context.deliveryDate, context.deliveryTime),
+        'Program: ' + (context.requestorProgram || ''),
+        'Delivery Location: ' + (context.deliveryLocation || '')
       ].join('\n'),
       ui.ButtonSet.OK
     );
@@ -110,15 +110,10 @@ function risStatusShowDeliveryDialog() {
 }
 
 function risStatusShowDialog_(mode) {
-  const html = HtmlService
-    .createHtmlOutput(risStatusBuildDialogHtml_(mode))
-    .setWidth(480)
-    .setHeight(mode === 'request' ? 620 : 650);
-
-  SpreadsheetApp.getUi().showModalDialog(
-    html,
-    mode === 'request' ? 'Request Status' : 'Delivery Status'
-  );
+  const html = HtmlService.createHtmlOutput(risStatusBuildDialogHtml_(mode))
+    .setWidth(500)
+    .setHeight(mode === 'request' ? 690 : 650);
+  SpreadsheetApp.getUi().showModalDialog(html, mode === 'request' ? 'Request Status' : 'Delivery Status');
 }
 
 function risStatusProcessRequest(form) {
@@ -145,10 +140,9 @@ function risStatusProcessRequest(form) {
   const dateText = risStatusFormatLongDate_(scheduleDate);
   const email = status === 'Approved'
     ? risStatusBuildApprovedRequestEmail_(context, dateText, scheduleTime)
-    : risStatusBuildRescheduleRequestEmail_(context, dateText, scheduleTime);
+    : risStatusBuildRescheduledRequestEmail_(context, dateText, scheduleTime);
 
   risStatusSendEmail_(email, [updater.email]);
-
   risStatusSetMany_(context.sheet, context.row, {
     requestStatusEmailSentAt: new Date(),
     requestStatusEmailSentBy: risStatusUpdaterLabel_(updater)
@@ -156,17 +150,6 @@ function risStatusProcessRequest(form) {
 
   SpreadsheetApp.getActive().toast('Request Status email sent for RIS ' + context.risNo + '.', RIS_STATUS_CONFIG.menuName, 5);
   return 'Request Status saved and email sent for RIS ' + context.risNo + '.';
-}
-
-function risStatusGetBaseDate(form) {
-  const context = risStatusGetTargetContext_(form);
-  const sheetDate = risStatusGetSheetBaseDate_(context);
-
-  return {
-    risNo: context.risNo,
-    baseDate: risStatusFormatInputDate_(sheetDate),
-    displayDate: risStatusFormatLongDate_(sheetDate)
-  };
 }
 
 function risStatusProcessDelivery(form) {
@@ -177,7 +160,6 @@ function risStatusProcessDelivery(form) {
   const context = risStatusGetTargetContext_(form);
 
   risStatusValidateDateNotBeforeSheetDate_(deliveredDate, context, 'Delivery Date');
-
   risStatusSetMany_(context.sheet, context.row, {
     risStatus: status,
     deliveryStatus: status,
@@ -187,10 +169,8 @@ function risStatusProcessDelivery(form) {
     deliveryStatusUpdatedAt: new Date()
   });
 
-  const dateText = risStatusFormatLongDate_(deliveredDate);
-  const email = risStatusBuildDeliveryEmail_(status, context, dateText, deliveredTime);
+  const email = risStatusBuildDeliveryEmail_(status, context, risStatusFormatLongDate_(deliveredDate), deliveredTime);
   risStatusSendEmail_(email, [updater.email]);
-
   risStatusSetMany_(context.sheet, context.row, {
     deliveryStatusEmailSentAt: new Date(),
     deliveryStatusEmailSentBy: risStatusUpdaterLabel_(updater)
@@ -201,6 +181,16 @@ function risStatusProcessDelivery(form) {
 
   SpreadsheetApp.getActive().toast('Delivery Status email sent for RIS ' + context.risNo + '.', RIS_STATUS_CONFIG.menuName, 5);
   return 'Delivery Status saved and email sent for RIS ' + context.risNo + '.' + reminderWarning;
+}
+
+function risStatusGetBaseDate(form) {
+  const context = risStatusGetTargetContext_(form);
+  const sheetDate = risStatusGetSheetBaseDate_(context);
+  return {
+    risNo: context.risNo,
+    baseDate: risStatusFormatInputDate_(sheetDate),
+    displayDate: risStatusFormatLongDate_(sheetDate)
+  };
 }
 
 function risStatusGetTargetContext_(form) {
@@ -216,34 +206,29 @@ function risStatusBuildRowContext_(ss, sheet, row, fallbackRisNo, rowValues, dis
   displayValues = displayValues || sheet.getRange(row, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
   headerMap = headerMap || risStatusGetHeaderMap_(sheet);
 
-  const requestorEmail = risStatusGetDisplayField_(displayValues, headerMap, 'requestorEmail');
-  const risNo = risStatusGetDisplayField_(displayValues, headerMap, 'risNo') ||
-    fallbackRisNo ||
-    risStatusGetDisplayField_(displayValues, headerMap, 'recordId') ||
-    'the selected RIS';
-  const requestorName = risStatusGetDisplayField_(displayValues, headerMap, 'requestorName') ||
-    risStatusGetDisplayField_(displayValues, headerMap, 'requestorProgram') ||
-    'Requestor';
+  const requestorProgram = risStatusGetDisplayField_(displayValues, headerMap, 'requestorProgram');
+  const requestorName = risStatusGetDisplayField_(displayValues, headerMap, 'requestorName') || requestorProgram || 'Requestor';
 
   return {
     ss: ss,
     sheet: sheet,
     row: row,
-    risNo: risNo,
+    risNo: risStatusGetDisplayField_(displayValues, headerMap, 'risNo') ||
+      fallbackRisNo ||
+      risStatusGetDisplayField_(displayValues, headerMap, 'recordId') ||
+      'the selected RIS',
     requestorName: requestorName,
-    requestorEmail: requestorEmail,
-    requestorProgram: risStatusGetDisplayField_(displayValues, headerMap, 'requestorProgram'),
+    requestorEmail: risStatusGetDisplayField_(displayValues, headerMap, 'requestorEmail'),
+    requestorProgram: requestorProgram,
     deliveryLocation: risStatusGetDisplayField_(displayValues, headerMap, 'deliveryLocation'),
     requestedDate: risStatusGetDisplayField_(displayValues, headerMap, 'requestedDate'),
     requestedDateValue: risStatusGetRawField_(rowValues, headerMap, 'requestedDate'),
     risStatus: risStatusGetDisplayField_(displayValues, headerMap, 'risStatus'),
     requestStatus: risStatusGetDisplayField_(displayValues, headerMap, 'requestStatus'),
     requestDate: risStatusGetDisplayField_(displayValues, headerMap, 'requestDate'),
-    requestDateValue: risStatusGetRawField_(rowValues, headerMap, 'requestDate'),
     requestTime: risStatusGetDisplayField_(displayValues, headerMap, 'requestTime'),
     deliveryStatus: risStatusGetDisplayField_(displayValues, headerMap, 'deliveryStatus'),
     deliveryDate: risStatusGetDisplayField_(displayValues, headerMap, 'deliveryDate'),
-    deliveryDateValue: risStatusGetRawField_(rowValues, headerMap, 'deliveryDate'),
     deliveryTime: risStatusGetDisplayField_(displayValues, headerMap, 'deliveryTime'),
     deliveryStatusUpdatedBy: risStatusGetDisplayField_(displayValues, headerMap, 'deliveryStatusUpdatedBy')
   };
@@ -258,18 +243,13 @@ function risStatusResolveTargetRow_(ss, entriesSheet, form) {
     if (!activeSpreadsheet || activeSpreadsheet.getId() !== ss.getId()) {
       throw new Error('Please open the transactions spreadsheet and select a RIS row.');
     }
-
     if (!activeSheet || !activeRange || activeRange.getRow() <= RIS_STATUS_CONFIG.headerRow) {
       throw new Error('Please select a data row, not the header row.');
     }
-
-    if (activeSheet.getName() === entriesSheet.getName()) {
-      return activeRange.getRow();
-    }
+    if (activeSheet.getName() === entriesSheet.getName()) return activeRange.getRow();
 
     const selectedRisNo = risStatusGetRowRisKey_(activeSheet, activeRange.getRow());
     if (selectedRisNo) return risStatusFindEntryRow_(entriesSheet, selectedRisNo);
-
     throw new Error('Please select a row in RIS Entries or a row with a RIS Number.');
   }
 
@@ -284,12 +264,8 @@ function risStatusFindEntryRow_(entriesSheet, lookup) {
   const recordIdColumn = headerMap.recordId;
   const lastRow = entriesSheet.getLastRow();
 
-  if (lastRow <= RIS_STATUS_CONFIG.headerRow) {
-    throw new Error('No RIS records were found below the header row.');
-  }
-  if (!risNoColumn && !recordIdColumn) {
-    throw new Error('RIS Entries must include a RIS Number column.');
-  }
+  if (lastRow <= RIS_STATUS_CONFIG.headerRow) throw new Error('No RIS records were found below the header row.');
+  if (!risNoColumn && !recordIdColumn) throw new Error('RIS Entries must include a RIS Number column.');
 
   const values = entriesSheet
     .getRange(RIS_STATUS_CONFIG.headerRow + 1, 1, lastRow - RIS_STATUS_CONFIG.headerRow, entriesSheet.getLastColumn())
@@ -300,53 +276,12 @@ function risStatusFindEntryRow_(entriesSheet, lookup) {
     const row = values[i];
     const rowRisNo = risNoColumn ? row[risNoColumn - 1] : '';
     const rowRecordId = recordIdColumn ? row[recordIdColumn - 1] : '';
-
-    if (
-      risStatusNormalizeLookup_(rowRisNo) === lookupKey ||
-      risStatusNormalizeLookup_(rowRecordId) === lookupKey
-    ) {
+    if (risStatusNormalizeLookup_(rowRisNo) === lookupKey || risStatusNormalizeLookup_(rowRecordId) === lookupKey) {
       return RIS_STATUS_CONFIG.headerRow + 1 + i;
     }
   }
 
   throw new Error('No RIS Entries row found for: ' + lookup);
-}
-
-function risStatusGetRowRisKey_(sheet, rowNumber) {
-  const headers = sheet.getRange(RIS_STATUS_CONFIG.headerRow, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
-  const risCol = risFindHeaderColumn_(headers, RIS_STATUS_FIELD_ALIASES.risNo);
-  const recordCol = risFindHeaderColumn_(headers, RIS_STATUS_FIELD_ALIASES.recordId);
-  if (!risCol && !recordCol) return '';
-
-  const row = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
-  return risCleanText_(risCol ? row[risCol - 1] : '') || risCleanText_(recordCol ? row[recordCol - 1] : '');
-}
-
-function risStatusPromptRisNo_(ui) {
-  const selectedRisNo = risStatusGetSelectedRisKey_();
-  const helper = selectedRisNo
-    ? '\n\nSelected row detected: ' + selectedRisNo + '\nLeave the prompt blank to use the selected row.'
-    : '';
-  const response = ui.prompt('Find RIS Record', 'Enter RIS No. or Record ID:' + helper, ui.ButtonSet.OK_CANCEL);
-  if (response.getSelectedButton() !== ui.Button.OK) return '';
-
-  const entered = response.getResponseText().trim();
-  if (entered) return entered;
-  if (selectedRisNo) return selectedRisNo;
-
-  ui.alert('Please enter the RIS No.');
-  return '';
-}
-
-function risStatusGetSelectedRisKey_() {
-  try {
-    const sheet = SpreadsheetApp.getActiveSheet();
-    const range = sheet && sheet.getActiveRange();
-    if (!sheet || !range || range.getRow() <= RIS_STATUS_CONFIG.headerRow || sheet.getLastColumn() < 1) return '';
-    return risStatusGetRowRisKey_(sheet, range.getRow());
-  } catch (error) {
-    return '';
-  }
 }
 
 function risStatusGetHeaderMap_(sheet) {
@@ -362,13 +297,9 @@ function risStatusGetHeaderMap_(sheet) {
 
 function risStatusSetMany_(sheet, row, valuesByField) {
   Object.keys(valuesByField).forEach(function(key) {
-    risStatusSetKnownCellValue_(sheet, row, key, valuesByField[key]);
+    const column = risStatusEnsureColumn_(sheet, key);
+    sheet.getRange(row, column).setValue(valuesByField[key]);
   });
-}
-
-function risStatusSetKnownCellValue_(sheet, row, key, value) {
-  const column = risStatusEnsureColumn_(sheet, key);
-  sheet.getRange(row, column).setValue(value);
 }
 
 function risStatusEnsureColumn_(sheet, key) {
@@ -393,13 +324,50 @@ function risStatusGetRawField_(rowValues, headerMap, key) {
   return column ? rowValues[column - 1] : '';
 }
 
+function risStatusGetRowRisKey_(sheet, rowNumber) {
+  const headers = sheet.getRange(RIS_STATUS_CONFIG.headerRow, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  const risCol = risFindHeaderColumn_(headers, RIS_STATUS_FIELD_ALIASES.risNo);
+  const recordCol = risFindHeaderColumn_(headers, RIS_STATUS_FIELD_ALIASES.recordId);
+  if (!risCol && !recordCol) return '';
+
+  const row = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  return risCleanText_(risCol ? row[risCol - 1] : '') || risCleanText_(recordCol ? row[recordCol - 1] : '');
+}
+
+function risStatusGetSelectedRisKey_() {
+  try {
+    const sheet = SpreadsheetApp.getActiveSheet();
+    const range = sheet && sheet.getActiveRange();
+    if (!sheet || !range || range.getRow() <= RIS_STATUS_CONFIG.headerRow || sheet.getLastColumn() < 1) return '';
+    return risStatusGetRowRisKey_(sheet, range.getRow());
+  } catch (error) {
+    return '';
+  }
+}
+
+function risStatusPromptRisNo_(ui) {
+  const selectedRisNo = risStatusGetSelectedRisKey_();
+  const helper = selectedRisNo
+    ? '\n\nSelected row detected: ' + selectedRisNo + '\nLeave the prompt blank to use the selected row.'
+    : '';
+  const response = ui.prompt('Find RIS Record', 'Enter RIS No. or Record ID:' + helper, ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return '';
+
+  const entered = response.getResponseText().trim();
+  if (entered) return entered;
+  if (selectedRisNo) return selectedRisNo;
+
+  ui.alert('Please enter the RIS No.');
+  return '';
+}
+
 function risStatusCurrentOverallStatus_(context) {
   return context.risStatus || context.deliveryStatus || context.requestStatus || RIS_STATUS_CONFIG.defaultStatus;
 }
 
 function risStatusOverallStatusForRequest_(status) {
   if (status === 'Approved') return 'Request Approved';
-  if (status === 'Reschedule') return 'Request Reschedule';
+  if (status === 'Rescheduled' || status === 'Reschedule') return 'Request Rescheduled';
   return status || RIS_STATUS_CONFIG.defaultStatus;
 }
 
@@ -452,16 +420,13 @@ function risStatusFindAdminEmail_(username, user) {
       senderCol ? row[senderCol - 1] : ''
     ].map(risCoreNormalizeText_);
 
-    const matches = rowKeys.some(function(value) {
-      return wanted.indexOf(value) !== -1;
-    });
-    if (!matches) continue;
-
-    return risStatusFirstEmail_([
-      recipientCol ? row[recipientCol - 1] : '',
-      senderCol ? row[senderCol - 1] : '',
-      usernameCol ? row[usernameCol - 1] : ''
-    ]);
+    if (rowKeys.some(function(value) { return wanted.indexOf(value) !== -1; })) {
+      return risStatusFirstEmail_([
+        recipientCol ? row[recipientCol - 1] : '',
+        senderCol ? row[senderCol - 1] : '',
+        usernameCol ? row[usernameCol - 1] : ''
+      ]);
+    }
   }
 
   return '';
@@ -477,7 +442,6 @@ function risStatusFirstEmail_(values) {
 
 function risStatusInstallDailyReminderTrigger() {
   const trigger = risStatusEnsureDailyReminderTrigger_();
-
   SpreadsheetApp.getUi().alert(
     'Daily status reminders are installed.\n\n' +
     'Reminder time: around 5:00 PM, ' + Session.getScriptTimeZone() + '\n' +
@@ -488,7 +452,6 @@ function risStatusInstallDailyReminderTrigger() {
 function risStatusRunReminderCheckNow() {
   const result = risStatusSendDailyReminders();
   const warningText = result.warnings.length ? '\n\nWarnings:\n' + result.warnings.join('\n') : '';
-
   SpreadsheetApp.getUi().alert(
     'Status reminder check complete.\n\n' +
     'Emails sent: ' + result.sent + '\n' +
@@ -503,36 +466,26 @@ function risStatusSendDailyReminders() {
   const sheet = risCoreGetRequiredSheet_(ss, RIS_CONFIG.entriesSheetName || RIS_STATUS_CONFIG.entriesSheetName);
   const headerMap = risStatusGetHeaderMap_(sheet);
   const deliveryStatusColumn = headerMap.deliveryStatus;
-  const lastRow = sheet.getLastRow();
-  const lastColumn = sheet.getLastColumn();
   const result = {
-    checked: Math.max(lastRow - RIS_STATUS_CONFIG.headerRow, 0),
+    checked: Math.max(sheet.getLastRow() - RIS_STATUS_CONFIG.headerRow, 0),
     sent: 0,
     warnings: []
   };
 
-  if (!deliveryStatusColumn || lastRow <= RIS_STATUS_CONFIG.headerRow) return result;
+  if (!deliveryStatusColumn || sheet.getLastRow() <= RIS_STATUS_CONFIG.headerRow) return result;
 
-  const rowCount = lastRow - RIS_STATUS_CONFIG.headerRow;
-  const rowValues = sheet.getRange(RIS_STATUS_CONFIG.headerRow + 1, 1, rowCount, lastColumn).getValues();
-  const displayValues = sheet.getRange(RIS_STATUS_CONFIG.headerRow + 1, 1, rowCount, lastColumn).getDisplayValues();
+  const rowCount = sheet.getLastRow() - RIS_STATUS_CONFIG.headerRow;
+  const rowValues = sheet.getRange(RIS_STATUS_CONFIG.headerRow + 1, 1, rowCount, sheet.getLastColumn()).getValues();
+  const displayValues = sheet.getRange(RIS_STATUS_CONFIG.headerRow + 1, 1, rowCount, sheet.getLastColumn()).getDisplayValues();
 
   for (let i = 0; i < rowCount; i++) {
     const rowNumber = RIS_STATUS_CONFIG.headerRow + 1 + i;
     const status = String(displayValues[i][deliveryStatusColumn - 1] || '').trim();
-
-    if (
-      !risStatusIsSameStatus_(status, 'RIS NOT Signed') &&
-      !risStatusIsSameStatus_(status, 'RIS Discrepancy')
-    ) {
-      continue;
-    }
+    if (!risStatusIsSameStatus_(status, 'RIS NOT Signed') && !risStatusIsSameStatus_(status, 'RIS Discrepancy')) continue;
 
     try {
       const context = risStatusBuildRowContext_(ss, sheet, rowNumber, '', rowValues[i], displayValues[i], headerMap);
-      const email = risStatusBuildDailyReminderEmail_(status, context);
-
-      risStatusSendEmail_(email, [context.deliveryStatusUpdatedBy]);
+      risStatusSendEmail_(risStatusBuildDailyReminderEmail_(status, context), [context.deliveryStatusUpdatedBy]);
       result.sent++;
     } catch (error) {
       result.warnings.push('Row ' + rowNumber + ': ' + risCoreErrorMessage_(error));
@@ -542,12 +495,150 @@ function risStatusSendDailyReminders() {
   return result;
 }
 
+function risStatusEnsureDailyReminderTriggerSafely_(status) {
+  if (!risStatusIsSameStatus_(status, 'RIS NOT Signed') && !risStatusIsSameStatus_(status, 'RIS Discrepancy')) {
+    return { installed: false, skipped: true };
+  }
+
+  try {
+    risStatusEnsureDailyReminderTrigger_();
+    return { installed: true };
+  } catch (error) {
+    return { installed: false, warning: risCoreErrorMessage_(error) };
+  }
+}
+
+function risStatusEnsureDailyReminderTrigger_() {
+  const existingTrigger = risStatusGetDailyReminderTrigger_();
+  if (existingTrigger) return existingTrigger;
+
+  return ScriptApp.newTrigger(RIS_STATUS_CONFIG.reminderTriggerFunction)
+    .timeBased()
+    .everyDays(1)
+    .atHour(RIS_STATUS_CONFIG.reminderHour)
+    .nearMinute(0)
+    .inTimezone(Session.getScriptTimeZone())
+    .create();
+}
+
+function risStatusGetDailyReminderTrigger_() {
+  const triggers = ScriptApp.getProjectTriggers();
+  for (let i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === RIS_STATUS_CONFIG.reminderTriggerFunction) return triggers[i];
+  }
+  return null;
+}
+
+function risStatusSendEmail_(email, extraCcEmails) {
+  const options = {
+    to: email.to,
+    subject: email.subject,
+    body: email.body,
+    htmlBody: email.htmlBody
+  };
+  const ccEmails = risStatusBuildCcEmails_(email.to, extraCcEmails || []);
+  if (ccEmails.length > 0) options.cc = ccEmails.join(',');
+  MailApp.sendEmail(options);
+}
+
+function risStatusBuildCcEmails_(toEmails, extraCcEmails) {
+  const recipients = {};
+  const result = [];
+
+  risStatusNormalizeEmailList_(toEmails).forEach(function(email) {
+    recipients[email] = true;
+  });
+
+  RIS_STATUS_CONFIG.statusCcEmails.concat(extraCcEmails || []).forEach(function(email) {
+    const normalized = risStatusNormalizeEmail_(email);
+    if (!risStatusIsValidEmail_(normalized) || recipients[normalized] || result.indexOf(normalized) >= 0) return;
+    result.push(normalized);
+  });
+
+  return result;
+}
+
+function risStatusBuildApprovedRequestEmail_(context, dateText, deliveryTime) {
+  return risStatusBuildEmail_({
+    to: context.requestorEmail,
+    subject: 'Delivery of Requested Items is Approved - RIS ' + context.risNo,
+    greetingName: context.requestorName,
+    paragraphs: [
+      'We are pleased to inform you that the delivery of requested items for RIS ' + context.risNo + ' has been approved.',
+      'Kindly expect the delivery on ' + dateText + ', ' + deliveryTime + '.'
+    ],
+    closing: 'Thank you. Please coordinate with the depot personnel if further assistance is needed.'
+  });
+}
+
+function risStatusBuildRescheduledRequestEmail_(context, dateText, deliveryTime) {
+  return risStatusBuildEmail_({
+    to: context.requestorEmail,
+    subject: 'Delivery Reschedule Notice - RIS ' + context.risNo,
+    greetingName: context.requestorName,
+    paragraphs: [
+      'Please be informed that the delivery schedule for RIS ' + context.risNo + ' needs to be rescheduled.',
+      'The proposed rescheduled delivery date and time is ' + dateText + ', ' + deliveryTime + '.',
+      'If this schedule is not applicable, kindly reply with your preferred delivery date and time so we can coordinate the update.'
+    ],
+    closing: 'We apologize for the inconvenience and appreciate your understanding.'
+  });
+}
+
+function risStatusBuildDeliveryEmail_(status, context, dateText, deliveredTime) {
+  if (status === 'RIS NOT Signed') {
+    if (!risStatusIsValidEmail_(context.requestorEmail)) {
+      throw new Error('Missing or invalid requestor email for row ' + context.row + '.');
+    }
+    return risStatusBuildEmail_({
+      to: context.requestorEmail,
+      subject: 'Action Required: RIS Document Signature - RIS ' + context.risNo,
+      greetingName: context.requestorName,
+      paragraphs: [
+        'This is a reminder that the RIS documents for RIS ' + context.risNo + ' remain unsigned after delivery.',
+        'The delivery was recorded on ' + dateText + ', ' + deliveredTime + '.',
+        'Kindly settle the required documents with the depot personnel so the delivery status can be completed.'
+      ],
+      closing: 'Your prompt attention to this matter is appreciated.'
+    });
+  }
+
+  if (status === 'RIS Discrepancy') {
+    return risStatusBuildEmail_({
+      to: RIS_STATUS_CONFIG.medicalSupplyEmail,
+      subject: 'RIS Discrepancy for Settlement - RIS ' + context.risNo,
+      greetingName: 'Medical Supply Depot Team',
+      paragraphs: [
+        'Please be informed that a discrepancy was reported for RIS ' + context.risNo + '.',
+        'The delivery was recorded on ' + dateText + ', ' + deliveredTime + '.',
+        'Kindly coordinate and settle the items with discrepancy as soon as possible.'
+      ],
+      closing: 'Thank you for your immediate attention.'
+    });
+  }
+
+  if (status === 'RIS Signed Completed') {
+    if (!risStatusIsValidEmail_(context.requestorEmail)) {
+      throw new Error('Missing or invalid requestor email for row ' + context.row + '.');
+    }
+    return risStatusBuildEmail_({
+      to: context.requestorEmail,
+      subject: 'Delivery Completed - RIS ' + context.risNo,
+      greetingName: context.requestorName,
+      paragraphs: [
+        'This is to confirm that the delivery for RIS ' + context.risNo + ' has been completed.',
+        'The delivery was recorded on ' + dateText + ', ' + deliveredTime + '.'
+      ],
+      closing: 'Thank you for completing the required documentation.'
+    });
+  }
+
+  throw new Error('Unsupported delivery status: ' + status);
+}
+
 function risStatusBuildDailyReminderEmail_(status, context) {
   if (risStatusIsSameStatus_(status, 'RIS NOT Signed')) {
-    if (!risStatusIsValidEmail_(context.requestorEmail)) {
-      throw new Error('Missing or invalid requestor email.');
-    }
-
+    if (!risStatusIsValidEmail_(context.requestorEmail)) throw new Error('Missing or invalid requestor email.');
     return risStatusBuildEmail_({
       to: context.requestorEmail,
       subject: 'RIS Reminder: Document Signature Required - ' + context.risNo,
@@ -576,171 +667,6 @@ function risStatusBuildDailyReminderEmail_(status, context) {
   throw new Error('Unsupported reminder status: ' + status);
 }
 
-function risStatusEnsureDailyReminderTriggerSafely_(status) {
-  if (
-    !risStatusIsSameStatus_(status, 'RIS NOT Signed') &&
-    !risStatusIsSameStatus_(status, 'RIS Discrepancy')
-  ) {
-    return { installed: false, skipped: true };
-  }
-
-  try {
-    risStatusEnsureDailyReminderTrigger_();
-    return { installed: true };
-  } catch (error) {
-    return { installed: false, warning: risCoreErrorMessage_(error) };
-  }
-}
-
-function risStatusEnsureDailyReminderTrigger_() {
-  const existingTrigger = risStatusGetDailyReminderTrigger_();
-  if (existingTrigger) return existingTrigger;
-
-  return ScriptApp.newTrigger(RIS_STATUS_CONFIG.reminderTriggerFunction)
-    .timeBased()
-    .everyDays(1)
-    .atHour(RIS_STATUS_CONFIG.reminderHour)
-    .nearMinute(0)
-    .inTimezone(Session.getScriptTimeZone())
-    .create();
-}
-
-function risStatusGetDailyReminderTrigger_() {
-  const triggers = ScriptApp.getProjectTriggers();
-
-  for (let i = 0; i < triggers.length; i++) {
-    if (triggers[i].getHandlerFunction() === RIS_STATUS_CONFIG.reminderTriggerFunction) {
-      return triggers[i];
-    }
-  }
-
-  return null;
-}
-
-function risStatusSendEmail_(email, extraCcEmails) {
-  const options = {
-    to: email.to,
-    subject: email.subject,
-    body: email.body,
-    htmlBody: email.htmlBody
-  };
-  const ccEmails = risStatusBuildCcEmails_(email.to, extraCcEmails || []);
-
-  if (ccEmails.length > 0) options.cc = ccEmails.join(',');
-  MailApp.sendEmail(options);
-}
-
-function risStatusBuildCcEmails_(toEmails, extraCcEmails) {
-  const recipients = {};
-  const result = [];
-
-  risStatusNormalizeEmailList_(toEmails).forEach(function(email) {
-    recipients[email] = true;
-  });
-
-  RIS_STATUS_CONFIG.statusCcEmails.concat(extraCcEmails || []).forEach(function(email) {
-    const normalized = risStatusNormalizeEmail_(email);
-
-    if (!risStatusIsValidEmail_(normalized) || recipients[normalized]) return;
-    if (result.indexOf(normalized) >= 0) return;
-
-    result.push(normalized);
-  });
-
-  return result;
-}
-
-function risStatusGetActiveUserEmail_() {
-  try {
-    return risStatusNormalizeEmail_(Session.getActiveUser().getEmail());
-  } catch (error) {
-    return '';
-  }
-}
-
-function risStatusBuildApprovedRequestEmail_(context, dateText, deliveryTime) {
-  return risStatusBuildEmail_({
-    to: context.requestorEmail,
-    subject: 'Delivery of Requested Items is Approved - RIS ' + context.risNo,
-    greetingName: context.requestorName,
-    paragraphs: [
-      'We are pleased to inform you that the delivery of requested items for RIS ' + context.risNo + ' has been approved.',
-      'Kindly expect the delivery on ' + dateText + ', ' + deliveryTime + '.'
-    ],
-    closing: 'Thank you. Please coordinate with the depot personnel if further assistance is needed.'
-  });
-}
-
-function risStatusBuildRescheduleRequestEmail_(context, dateText, deliveryTime) {
-  return risStatusBuildEmail_({
-    to: context.requestorEmail,
-    subject: 'Delivery Reschedule Notice - RIS ' + context.risNo,
-    greetingName: context.requestorName,
-    paragraphs: [
-      'We regret to inform you that we cannot deliver the requested items for RIS ' + context.risNo + ' on ' + dateText + ', ' + deliveryTime + '.',
-      'Kindly reply with your new proposed delivery date and preferred time: AM, PM, or Whole Day.'
-    ],
-    closing: 'We apologize for the inconvenience and appreciate your understanding.'
-  });
-}
-
-function risStatusBuildDeliveryEmail_(status, context, dateText, deliveredTime) {
-  if (status === 'RIS NOT Signed') {
-    if (!risStatusIsValidEmail_(context.requestorEmail)) {
-      throw new Error('Missing or invalid requestor email for row ' + context.row + '.');
-    }
-
-    return risStatusBuildEmail_({
-      to: context.requestorEmail,
-      subject: 'Action Required: RIS Document Signature - RIS ' + context.risNo,
-      greetingName: context.requestorName,
-      paragraphs: [
-        'This is a reminder that the RIS documents for RIS ' + context.risNo + ' remain unsigned after delivery.',
-        'The delivery was recorded on ' + dateText + ', ' + deliveredTime + '.',
-        'Kindly settle the required documents with the depot personnel so the delivery status can be completed.'
-      ],
-      closing: 'Your prompt attention to this matter is appreciated.'
-    });
-  }
-
-  if (status === 'RIS Discrepancy') {
-    if (!risStatusIsValidEmail_(RIS_STATUS_CONFIG.medicalSupplyEmail)) {
-      throw new Error('Medical Supply Depot email is missing or invalid.');
-    }
-
-    return risStatusBuildEmail_({
-      to: RIS_STATUS_CONFIG.medicalSupplyEmail,
-      subject: 'RIS Discrepancy for Settlement - RIS ' + context.risNo,
-      greetingName: 'Medical Supply Depot Team',
-      paragraphs: [
-        'Please be informed that a discrepancy was reported for RIS ' + context.risNo + '.',
-        'The delivery was recorded on ' + dateText + ', ' + deliveredTime + '.',
-        'Kindly coordinate and settle the items with discrepancy as soon as possible.'
-      ],
-      closing: 'Thank you for your immediate attention.'
-    });
-  }
-
-  if (status === 'RIS Signed Completed') {
-    if (!risStatusIsValidEmail_(context.requestorEmail)) {
-      throw new Error('Missing or invalid requestor email for row ' + context.row + '.');
-    }
-
-    return risStatusBuildEmail_({
-      to: context.requestorEmail,
-      subject: 'Delivery Completed - RIS ' + context.risNo,
-      greetingName: context.requestorName,
-      paragraphs: [
-        'This is to confirm that the delivery for RIS ' + context.risNo + ' has been completed.',
-        'The delivery was recorded on ' + dateText + ', ' + deliveredTime + '.'
-      ],
-      closing: 'Thank you for completing the required documentation.'
-    });
-  }
-
-  throw new Error('Unsupported delivery status: ' + status);
-}
-
 function risStatusBuildEmail_(details) {
   const paragraphs = details.paragraphs || [];
   const body = [
@@ -750,25 +676,22 @@ function risStatusBuildEmail_(details) {
     'Respectfully,',
     'Medical Supply Depot'
   ].join('\n\n');
-
   const htmlParagraphs = paragraphs.map(function(paragraph) {
     return '<p style="margin:0 0 12px;">' + risCoreEscapeHtml_(paragraph) + '</p>';
   }).join('');
-
-  const htmlBody = [
-    '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6;color:#1f2937;">',
-    '<p style="margin:0 0 12px;">Dear ' + risCoreEscapeHtml_(details.greetingName) + ',</p>',
-    htmlParagraphs,
-    '<p style="margin:0 0 12px;">' + risCoreEscapeHtml_(details.closing) + '</p>',
-    '<p style="margin:0;">Respectfully,<br>Medical Supply Depot</p>',
-    '</div>'
-  ].join('');
 
   return {
     to: details.to,
     subject: details.subject,
     body: body,
-    htmlBody: htmlBody
+    htmlBody: [
+      '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6;color:#1f2937;">',
+      '<p style="margin:0 0 12px;">Dear ' + risCoreEscapeHtml_(details.greetingName) + ',</p>',
+      htmlParagraphs,
+      '<p style="margin:0 0 12px;">' + risCoreEscapeHtml_(details.closing) + '</p>',
+      '<p style="margin:0;">Respectfully,<br>Medical Supply Depot</p>',
+      '</div>'
+    ].join('')
   };
 }
 
@@ -782,8 +705,6 @@ function risStatusParseDate_(dateValue) {
 }
 
 function risStatusParseSheetDate_(dateValue) {
-  if (!dateValue) return null;
-
   if (dateValue instanceof Date && !isNaN(dateValue.getTime())) {
     return new Date(dateValue.getFullYear(), dateValue.getMonth(), dateValue.getDate());
   }
@@ -792,16 +713,8 @@ function risStatusParseSheetDate_(dateValue) {
   if (!text) return null;
 
   let parsed = new Date(text + 'T00:00:00');
-  if (!isNaN(parsed.getTime())) {
-    return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
-  }
-
-  parsed = new Date(text);
-  if (!isNaN(parsed.getTime())) {
-    return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
-  }
-
-  return null;
+  if (isNaN(parsed.getTime())) parsed = new Date(text);
+  return isNaN(parsed.getTime()) ? null : new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
 }
 
 function risStatusValidateDateNotBeforeSheetDate_(selectedDate, context, label) {
@@ -819,11 +732,7 @@ function risStatusValidateDateNotBeforeSheetDate_(selectedDate, context, label) 
 
 function risStatusGetSheetBaseDate_(context) {
   const sheetDate = risStatusParseSheetDate_(context.requestedDateValue || context.requestedDate);
-
-  if (!sheetDate) {
-    throw new Error('The selected RIS row does not have a valid Date Requested value.');
-  }
-
+  if (!sheetDate) throw new Error('The selected RIS row does not have a valid Date Requested value.');
   return sheetDate;
 }
 
@@ -836,22 +745,17 @@ function risStatusFormatLongDate_(date) {
 }
 
 function risStatusRequireOneOf_(value, allowedValues, label) {
-  const text = String(value || '').trim();
-  if (allowedValues.indexOf(text) === -1) {
-    throw new Error('Please select a valid ' + label + '.');
+  let text = String(value || '').trim();
+  if (label === 'request status' && text === 'Reschedule' && allowedValues.indexOf('Rescheduled') >= 0) {
+    text = 'Rescheduled';
   }
+  if (allowedValues.indexOf(text) === -1) throw new Error('Please select a valid ' + label + '.');
   return text;
 }
 
 function risStatusNormalizeEmailList_(value) {
-  if (Array.isArray(value)) {
-    return value.map(risStatusNormalizeEmail_).filter(risStatusIsValidEmail_);
-  }
-
-  return String(value || '')
-    .split(/[;,\n]+/)
-    .map(risStatusNormalizeEmail_)
-    .filter(risStatusIsValidEmail_);
+  if (Array.isArray(value)) return value.map(risStatusNormalizeEmail_).filter(risStatusIsValidEmail_);
+  return String(value || '').split(/[;,\n]+/).map(risStatusNormalizeEmail_).filter(risStatusIsValidEmail_);
 }
 
 function risStatusNormalizeEmail_(value) {
@@ -870,12 +774,26 @@ function risStatusNormalizeLookup_(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function risStatusGetActiveUserEmail_() {
+  try {
+    return risStatusNormalizeEmail_(Session.getActiveUser().getEmail());
+  } catch (error) {
+    return '';
+  }
+}
+
 function risStatusBuildDialogHtml_(mode) {
   const isRequest = mode === 'request';
   const title = isRequest ? 'Request Status' : 'Delivery Status';
   const statusOptions = isRequest ? RIS_STATUS_CONFIG.requestStatuses : RIS_STATUS_CONFIG.deliveryStatuses;
   const dateLabel = isRequest ? 'Request Date' : 'Delivery Date';
   const serverFunction = isRequest ? 'risStatusProcessRequest' : 'risStatusProcessDelivery';
+  const requestLegend = isRequest
+    ? '<div class="legend">' +
+      '<div><strong>Approved</strong> - The requested date is accepted.</div>' +
+      '<div><strong>Rescheduled</strong> - The requested date will be rescheduled. Enter the proposed new date and time below. If the proposed schedule is not applicable, the requestor may reply with their preferred date and time.</div>' +
+      '</div>'
+    : '';
 
   return `
     <!doctype html>
@@ -919,6 +837,18 @@ function risStatusBuildDialogHtml_(mode) {
             font-size: 12px;
             line-height: 1.35;
             margin-top: 5px;
+          }
+
+          .legend {
+            background: #f8fafc;
+            border: 1px solid #dbe3ea;
+            border-radius: 6px;
+            color: #344054;
+            display: grid;
+            gap: 8px;
+            line-height: 1.4;
+            margin: 8px 0 10px;
+            padding: 12px;
           }
 
           .radio-row {
@@ -1008,6 +938,7 @@ function risStatusBuildDialogHtml_(mode) {
           </div>
 
           <label for="status">Status</label>
+          ${requestLegend}
           <select id="status" name="status" required>
             ${statusOptions.map(function(option) {
               return '<option value="' + risCoreEscapeHtml_(option) + '">' + risCoreEscapeHtml_(option) + '</option>';
@@ -1060,10 +991,7 @@ function risStatusBuildDialogHtml_(mode) {
             if (!result || !result.baseDate) return;
 
             dateInput.min = result.baseDate;
-            if (!dateInput.value || dateInput.value < result.baseDate) {
-              dateInput.value = result.baseDate;
-            }
-
+            if (!dateInput.value || dateInput.value < result.baseDate) dateInput.value = result.baseDate;
             dateHelp.textContent = defaultDateHelp + ' Base Date: ' + result.displayDate + '.';
           }
 
@@ -1112,8 +1040,6 @@ function risStatusBuildDialogHtml_(mode) {
             submitButton.textContent = 'Sending...';
             message.style.display = 'none';
 
-            const formData = getFormData();
-
             google.script.run
               .withSuccessHandler(result => {
                 showMessage(result, 'success');
@@ -1124,7 +1050,7 @@ function risStatusBuildDialogHtml_(mode) {
                 submitButton.disabled = false;
                 submitButton.textContent = 'Update & Send Email';
               })
-              .${serverFunction}(formData);
+              .${serverFunction}(getFormData());
           });
 
           updateRisNoVisibility();
